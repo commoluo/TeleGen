@@ -2,7 +2,18 @@
 
 This repository contains the code for reproducing the paper [WebGen-Bench: Evaluating LLMs on Generating Interactive and Functional Websites from Scratch](https://arxiv.org/abs/2505.03733).
 
+WebGen-Bench is a comprehensive benchmark for evaluating Large Language Models (LLMs) on their ability to generate interactive and functional websites from natural language instructions. This benchmark includes both automated testing frameworks and a specialized dataset for training and evaluation.
+
 The dataset is also at 🤗 [luzimu/WebGen-Bench](https://huggingface.co/datasets/luzimu/WebGen-Bench) and on [WebGen-Bench (Kaggle)](https://www.kaggle.com/datasets/zimulu/webgen-bench). But for the running of this repo, you do not need to download the data from these sources, as the data is already placed under the `data` directory.
+
+## Project Overview
+
+WebGen-Bench provides a complete ecosystem for:
+- **Evaluating LLMs** on website generation tasks using multiple platforms (Bolt.diy, OpenHands, Aider)
+- **Training specialized models** (WebGen-LM series) for web development
+- **Automated UI testing** using WebVoyager agent with visual understanding
+- **Appearance scoring** using vision-language models
+- **Data processing** and decontamination for training
 
 |Data | HF Links |
 |---|---|
@@ -22,6 +33,102 @@ The **model weights** can be downloaded from:
 The experiment outputs are placed under `outputs.zip`. It includes the output of the LLM-based agents that were tested in the paper. 
 
 If you wish to deploy Qwen2.5-VL-32B-Instruct yourself for UI agent testing, or you wish to reproduce the training of WebGen-LM, you can download the necessary models using `src-remote\download\download.py`.
+
+## Project Structure
+
+### Core Directories
+
+#### `/data/` - Benchmark Dataset
+- `test.jsonl` - Test dataset with 100 samples for evaluation
+- `train.jsonl` - Training dataset with ~2000 samples  
+- `train_data/` - Enhanced training data in different sizes
+  - `messages_generate_*.jsonl` - Generation training messages (150/300/600 samples)
+  - `messages_select_*.jsonl` - Selection training messages (150/300/600 samples)
+
+#### `/src/` - Main Source Code (Windows-compatible)
+- `automatic_bolt_diy/` - **Automated website generation with Bolt.diy**
+  - `eval_bolt_diy.py` - Main evaluation script for testing LLMs on Bolt.diy
+  - `automatic_web_gen.py` - Core automation logic for web generation
+  - `loop.bat` - Batch script for automatic restarting
+- `ui_test_bolt/` - **UI testing with WebVoyager agent**
+  - `ui_eval_with_answer.py` - UI evaluation with automated testing
+  - `compute_acc.py` - Accuracy computation from test results
+  - `start_service.py` - Service startup utilities
+- `grade_appearance_bolt_diy/` - **Website appearance evaluation**
+  - `eval_appearance.py` - Appearance scoring using vision-language models
+  - `get_screenshots.py` - Screenshot capture utilities
+  - `compute_grade.py` - Grade computation from appearance scores
+  - `filter_based_on_result.py` - Data filtering based on appearance scores
+- `ui_test_aider/` - UI testing for Aider platform
+- `ui_test_oh/` - UI testing for OpenHands platform  
+- `grade_appearance_aider/` - Appearance evaluation for Aider
+- `grade_appearance_oh/` - Appearance evaluation for OpenHands
+- `annotation_ui/` - Manual annotation tools for UI testing
+
+#### `/src-remote/` - Server-side Code (Linux-compatible)
+- `train/` - **Model training infrastructure**
+  - `train.py` - Main training script using transformers and deepspeed
+  - `train_WebGen-LM-*.sh` - Training scripts for different model sizes
+  - `utils/` - Training utilities (loader, trainer, utilities)
+- `deploy/` - **Model deployment scripts**
+  - `deploy_qwenvl_32b.sh` - Deploy Qwen2.5-VL-32B for UI testing
+  - `deploy_coder.sh` - Deploy trained models with vLLM
+- `process_train/` - **Data processing pipeline**
+  - `deduplicate/` - Data deduplication and decontamination
+  - `process_for_train/` - Convert data to training format
+- `download/` - Model download utilities
+
+#### `/webvoyager/` - UI Testing Agent
+- `run.py` - Main WebVoyager agent execution
+- `prompts.py` - System prompts for web navigation
+- `utils.py` - Utility functions for web interaction
+- `evaluation/` - Evaluation framework for UI testing
+- `data/` - Test task definitions
+
+#### `/outputs/` - Experimental Results
+Contains results from various LLM evaluations:
+- `bolt_*` - Results from Bolt.diy testing
+- `aider_*` - Results from Aider testing  
+- `oh_*` - Results from OpenHands testing
+
+### Key Components and Workflows
+
+#### 1. **Website Generation Evaluation**
+- **Platform**: Bolt.diy (primary), OpenHands, Aider
+- **Process**: LLM generates website code → Deploy to local server → Capture results
+- **Script**: `src/automatic_bolt_diy/eval_bolt_diy.py`
+
+#### 2. **UI Testing with WebVoyager**
+- **Agent**: WebVoyager (vision-language model for web interaction)
+- **Process**: Load generated website → Execute UI test tasks → Evaluate results
+- **Script**: `src/ui_test_bolt/ui_eval_with_answer.py`
+
+#### 3. **Appearance Scoring**
+- **Method**: Vision-language model evaluation of website screenshots
+- **Process**: Capture screenshots → VLM scoring → Filter high-quality results
+- **Script**: `src/grade_appearance_bolt_diy/eval_appearance.py`
+
+#### 4. **Model Training**
+- **Data**: Filtered website generation examples
+- **Models**: WebGen-LM-7B/14B/32B based on Qwen2.5-Coder
+- **Script**: `src-remote/train/train.py`
+
+### Data Format
+
+Each sample in the dataset contains:
+- `instruction` - Natural language description of website requirements
+- `Category` - Primary and secondary categories 
+- `application_type` - Type of application (e.g., "Analytics Platforms/Dashboards")
+- `ui_instruct` - List of UI test tasks with expected results
+
+### Application Types Covered
+- Analytics Platforms/Dashboards
+- Browser-Based Games  
+- Company Brochure Sites
+- Productivity Applications
+- Social Media Platforms
+- E-commerce Systems
+- Content Management Systems
 
 ## Testing Proprietary and Open-Source Models
 
