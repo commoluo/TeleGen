@@ -3,7 +3,7 @@ import os
 from argparse import ArgumentParser
 
 # Import the function from remove_node_modules.py
-from automatic_web_gen import automatic_web_gen
+from automatic_web_gen_fixed import automatic_web_gen
 from remove_invalid_through_extract import process_directory
 
 def main():

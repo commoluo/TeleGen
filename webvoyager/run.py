@@ -13,7 +13,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
-
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_TEXT_ONLY
 from openai import OpenAI
 from utils import (
@@ -75,6 +75,11 @@ def driver_config(args: argparse.Namespace) -> webdriver.ChromeOptions:
             "plugins.always_open_pdf_externally": True,
         },
     )
+    # 添加日志能力
+    options.add_experimental_option('useAutomationExtension', False)
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_argument('--enable-logging')
+    options.add_argument('--v=1')
     return options
 
 
@@ -177,7 +182,8 @@ def call_gpt4v_api(args, openai_client, messages):
         try:
             logging.info("Calling %s API…", args.api_model)
             openai_response = openai_client.chat.completions.create(
-                model=args.api_model,
+                # model=args.api_model,
+                model='gpt-4',
                 messages=messages,
                 max_tokens=1000,
                 seed=args.seed,
@@ -316,11 +322,23 @@ def run_single_task(task: Dict[str, Any], args_dict: Dict[str, Any]):
     setup_logger(task_dir)
     logging.info("########## TASK%s ##########", task["id"])
 
-    # Per‑process OpenAI client
-    client = OpenAI(api_key=args.api_key, base_url="http://PI_ADDRESS:PORT/v1")
+    # Per‑process OpenAI client（自定义base_url和api_key）
+    client = OpenAI(
+        api_key="8ef4c3ccf5f14ee6ad39dccaf1daef545aa3af0833ce4301a561ace8331947b2",
+        base_url="https://aigc-api.hkust-gz.edu.cn/v1"
+    )
 
     options = driver_config(args)
-    driver_task = webdriver.Chrome(options=options)
+    
+    # 尝试添加日志能力
+    try:
+        caps = DesiredCapabilities.CHROME.copy()
+        caps['goog:loggingPrefs'] = {'browser': 'ALL'}  # 只添加 browser 日志
+        driver_task = webdriver.Chrome(options=options, desired_capabilities=caps)
+    except Exception as e:
+        logging.warning(f"Failed to set logging capabilities, using default: {e}")
+        driver_task = webdriver.Chrome(options=options)
+    
     driver_task.set_window_size(args.window_width, args.window_height)
 
     try:
@@ -554,6 +572,34 @@ def run_single_task(task: Dict[str, Any], args_dict: Dict[str, Any]):
         "Total cost: %.4f",
         accumulate_prompt_token / 1000 * 0.01 + accumulate_completion_token / 1000 * 0.03,
     )
+    # 收集浏览器日志
+    try:
+        # 尝试收集 console 日志
+        console_logs = driver_task.get_log('browser')
+        with open(os.path.join(task_dir, 'console_logs.json'), 'w', encoding='utf-8') as f:
+            json.dump(console_logs, f, ensure_ascii=False, indent=2)
+        logging.info("Console logs collected successfully")
+    except Exception as e:
+        logging.warning(f'Failed to collect console logs: {e}')
+    
+    try:
+        # 尝试收集 network 日志（新版Chrome可能不支持）
+        network_logs = driver_task.get_log('performance')
+        with open(os.path.join(task_dir, 'network_logs.json'), 'w', encoding='utf-8') as f:
+            json.dump(network_logs, f, ensure_ascii=False, indent=2)
+        logging.info("Network logs collected successfully")
+    except Exception as e:
+        logging.warning(f'Network logs not supported in this Chrome version: {e}')
+    
+    try:
+        # 尝试收集 driver 日志
+        driver_logs = driver_task.get_log('driver')
+        with open(os.path.join(task_dir, 'driver_logs.json'), 'w', encoding='utf-8') as f:
+            json.dump(driver_logs, f, ensure_ascii=False, indent=2)
+        logging.info("Driver logs collected successfully")
+    except Exception as e:
+        logging.warning(f'Failed to collect driver logs: {e}')
+
     driver_task.quit()
 
 
@@ -566,7 +612,7 @@ def main():
     parser.add_argument("--test_file", type=str, default="data/test.json")
     parser.add_argument("--max_iter", type=int, default=5)
     parser.add_argument("--api_key", default="key", type=str, help="YOUR_OPENAI_API_KEY")
-    parser.add_argument("--api_model", default="gpt-4-vision-preview", type=str)
+    parser.add_argument("--api_model", default="gpt-4o", type=str)
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--max_attached_imgs", type=int, default=1)
@@ -591,6 +637,19 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # 自动加载.env
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
+    # 支持自动从环境变量读取API key
+    if args.api_key == "key":
+        args.api_key = os.getenv("OPENAI_API_KEY") or os.getenv("WEBVOYAGER_API_KEY")
+    if not args.api_key:
+        raise RuntimeError("No API key provided! Please set --api_key or .env variable.")
 
     os.makedirs(args.output_dir, exist_ok=True)
 

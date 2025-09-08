@@ -175,4 +175,9 @@ def automatic_web_gen(idx, instruction, download_dir="downloads", url="http://lo
         driver.quit()
 
 if __name__ == "__main__":
-    main(idx=1)
+    # Test with a simple instruction
+    automatic_web_gen(
+        idx=1, 
+        instruction="Create a simple hello world webpage with a blue background",
+        download_dir="downloads"
+    )
