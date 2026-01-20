@@ -14,12 +14,35 @@ class BackendFileCopier:
         self.debug_projects_dir = self.base_dir / "debug_logged_projects"
         self.optimized_code_dir = self.base_dir / "optimized_code"
         
-    def find_source_project_folder_name(self, optimized_folder_name):
-        """从优化后的文件夹名中推断出原始项目文件夹名"""
-        # 例如: from 'full_run_with_api_doc_001_runnable_optimized' to 'full_run_with_api_doc_001'
+    def find_source_project_folder_names(self, optimized_folder_name):
+        """从优化后的文件夹名推断可能的源项目文件夹名列表"""
+        candidates = []
+
+        # e.g. full_run_with_api_doc_001_restructured_optimized
+        if optimized_folder_name.endswith('_restructured_optimized'):
+            base = optimized_folder_name[:-len('_optimized')]  # -> ..._restructured
+            candidates.append(base)
+            if base.endswith('_restructured'):
+                candidates.append(base[:-len('_restructured')])
+
+        # e.g. full_run_with_api_doc_001_runnable_optimized
         if optimized_folder_name.endswith('_runnable_optimized'):
-            return optimized_folder_name.replace('_runnable_optimized', '')
-        return None
+            base = optimized_folder_name[:-len('_optimized')]  # -> ..._runnable
+            candidates.append(base)
+            if base.endswith('_runnable'):
+                candidates.append(base[:-len('_runnable')])
+
+        # 默认也尝试直接去掉 _optimized 后缀
+        if optimized_folder_name.endswith('_optimized'):
+            candidates.append(optimized_folder_name[:-len('_optimized')])
+
+        # 去重保持顺序
+        unique_candidates = []
+        for name in candidates:
+            if name and name not in unique_candidates:
+                unique_candidates.append(name)
+
+        return unique_candidates
     
     def copy_backend_files(self):
         """复制所有backend.js文件"""
@@ -43,27 +66,34 @@ class BackendFileCopier:
         
         for project_folder in sorted(project_folders):
             try:
-                source_folder_name = self.find_source_project_folder_name(project_folder.name)
-                
-                if not source_folder_name:
+                candidate_names = self.find_source_project_folder_names(project_folder.name)
+
+                if not candidate_names:
                     print(f"⚠️  无法推断源文件夹名: {project_folder.name}")
                     failed_count += 1
                     continue
-                
-                # 查找对应的debug项目文件夹
-                debug_folder = self.debug_projects_dir / source_folder_name
-                
-                if not debug_folder.exists():
-                    print(f"❌ 未找到源文件夹: {debug_folder}")
-                    missing_debug_folder_count += 1
-                    continue
-                
-                # 查找backend.js文件
-                backend_file = debug_folder / "backend.js"
-                
-                if not backend_file.exists():
-                    print(f"❌ 在 '{debug_folder.name}' 中未找到 backend.js")
-                    missing_backend_count += 1
+
+                debug_folder = None
+                backend_file = None
+                for candidate in candidate_names:
+                    possible_folder = self.debug_projects_dir / candidate
+                    possible_backend = possible_folder / "backend.js"
+                    if possible_backend.exists():
+                        debug_folder = possible_folder
+                        backend_file = possible_backend
+                        break
+
+                if not debug_folder:
+                    # 检查是否至少存在对应的debug项目目录
+                    for candidate in candidate_names:
+                        possible_folder = self.debug_projects_dir / candidate
+                        if possible_folder.exists():
+                            print(f"❌ 在 '{possible_folder.name}' 中未找到 backend.js")
+                            missing_backend_count += 1
+                            break
+                    else:
+                        print(f"❌ 未找到源文件夹: {self.debug_projects_dir / candidate_names[0]}")
+                        missing_debug_folder_count += 1
                     continue
                 
                 # 复制backend.js到目标文件夹

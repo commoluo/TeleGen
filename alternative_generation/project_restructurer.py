@@ -96,6 +96,11 @@ class ProjectRestructurer:
                     files[filename] = file_content.strip()
                     print(f"📄 提取文件: {filename} ({len(file_content)} 字符)")
         
+        # 如果没有找到文件分隔，并且内容不为空，则将其视为单个App.jsx文件
+        if not files and content.strip():
+            print("⚠️  未找到文件分隔符，将内容视为单个 App.jsx 文件")
+            files['src/App.jsx'] = content
+        
         # 如果没有找到文件分隔，尝试按语言类型分割
         if not files:
             print("⚠️  未找到标准文件格式，尝试其他格式...")
@@ -404,7 +409,8 @@ CORS_ORIGIN=http://localhost:3000'''.format(project_name=self.project_name)
 
         try:
             # 检查是否是优化后的项目
-            is_optimized_project = '_runnable_optimized' in self.project_path.name
+            optimized_suffixes = ('_runnable_optimized', '_restructured_optimized', '_optimized')
+            is_optimized_project = any(suffix in self.project_path.name for suffix in optimized_suffixes)
 
             if is_optimized_project:
                 # =================================================
@@ -412,12 +418,19 @@ CORS_ORIGIN=http://localhost:3000'''.format(project_name=self.project_name)
                 # =================================================
                 print("🔍 检测到优化项目，使用特定逻辑...")
                 
-                # 1. 查找前端JSX文件
-                frontend_file_name = f"{self.project_name}.jsx"
-                frontend_file_path = self.project_path / frontend_file_name
-                
-                if not frontend_file_path.exists():
-                    print(f"❌ 优化的前端文件未找到: {frontend_file_path}")
+                # 1. 查找前端JSX文件（兼容多种命名）
+                frontend_candidates = [
+                    self.project_path / f"{self.project_name}.jsx",
+                    self.project_path / "frontend_with_debug_logs.jsx",
+                    self.project_path / "frontend_original.jsx"
+                ]
+
+                frontend_file_path = next((path for path in frontend_candidates if path.exists()), None)
+
+                if not frontend_file_path:
+                    print("❌ 未找到任何前端 JSX 文件，尝试的路径如下：")
+                    for candidate in frontend_candidates:
+                        print(f"   - {candidate}")
                     return False
                 
                 frontend_content = frontend_file_path.read_text(encoding='utf-8')

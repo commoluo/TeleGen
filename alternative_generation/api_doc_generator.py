@@ -211,6 +211,7 @@ class APIDocumentationGenerator:
             print(f"   文档文件: {doc_file}")
             
         else:
+            print(result)
             print(f"❌ 记录 {record_id} API文档生成失败: {result.get('error', 'Unknown error')}")
         
         return result

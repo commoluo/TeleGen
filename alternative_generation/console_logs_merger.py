@@ -43,7 +43,7 @@ class ConsoleLogsMerger:
             return projects
         
         for item in sorted(self.results_debug_dir.iterdir()):
-            if item.is_dir() and item.name.endswith("_runnable"):
+            if item.is_dir() and (item.name.endswith("_runnable") or item.name.endswith("_restructured")):
                 projects.append(item.name)
         
         print(f"🔍 发现 {len(projects)} 个项目")
@@ -60,35 +60,107 @@ class ConsoleLogsMerger:
         # 收集所有任务的console_logs.json
         all_console_logs = {}
         task_count = 0
-        
+
         for task_dir in sorted(project_path.iterdir()):
             if not task_dir.is_dir():
                 continue
-            
+
+            entry = {
+                'task_name': task_dir.name,
+                'merge_timestamp': datetime.now().isoformat()
+            }
+            has_data = False
+            errors: List[str] = []
+
             console_log_file = task_dir / "console_logs.json"
             if console_log_file.exists():
                 try:
                     with open(console_log_file, 'r', encoding='utf-8') as f:
                         console_data = json.load(f)
-                    
-                    all_console_logs[task_dir.name] = {
-                        'task_name': task_dir.name,
-                        'console_logs': console_data,
-                        'log_count': len(console_data) if isinstance(console_data, list) else 1,
-                        'merge_timestamp': datetime.now().isoformat()
-                    }
-                    task_count += 1
-                    
+
+                    json_log_count = len(console_data) if isinstance(console_data, list) else 1
+                    entry['console_logs'] = console_data
+                    entry['json_log_count'] = json_log_count
+                    entry['log_count'] = json_log_count  # 向后兼容
+                    has_data = True
+
                 except Exception as e:
-                    print(f"⚠️  读取失败 {console_log_file}: {e}")
-                    all_console_logs[task_dir.name] = {
-                        'task_name': task_dir.name,
-                        'error': str(e),
-                        'merge_timestamp': datetime.now().isoformat()
-                    }
+                    error_msg = f"读取console_logs.json失败: {e}"
+                    print(f"⚠️  {error_msg} ({console_log_file})")
+                    errors.append(error_msg)
+
+            # 收集所有txt日志
+            text_logs = []
+            text_line_total = 0
+            for txt_file in sorted(task_dir.glob('*.txt')):
+                try:
+                    with open(txt_file, 'r', encoding='utf-8', errors='replace') as tf:
+                        content = tf.read()
+                    lines = content.splitlines()
+                    text_logs.append({
+                        'file_name': txt_file.name,
+                        'line_count': len(lines),
+                        'content': lines
+                    })
+                    text_line_total += len(lines)
+                    has_data = True
+                except Exception as e:
+                    error_msg = f"读取文本日志失败 {txt_file.name}: {e}"
+                    print(f"⚠️  {error_msg}")
+                    text_logs.append({
+                        'file_name': txt_file.name,
+                        'error': str(e)
+                    })
+
+            if text_logs:
+                entry['text_logs'] = text_logs
+                entry['text_log_line_count'] = text_line_total
+
+            if errors:
+                entry['errors'] = errors
+
+            if not has_data:
+                entry.setdefault('errors', []).append('未找到console_logs.json或txt日志文件')
+            else:
+                task_count += 1
+
+            all_console_logs[task_dir.name] = entry
         
+        # 收集项目根目录下的txt日志（例如安装失败日志）
+        root_text_files = sorted([f for f in project_path.glob('*.txt') if f.is_file()])
+        if root_text_files:
+            root_entry = {
+                'task_name': 'project_root',
+                'merge_timestamp': datetime.now().isoformat(),
+            }
+            text_logs = []
+            text_line_total = 0
+            for txt_file in root_text_files:
+                try:
+                    with open(txt_file, 'r', encoding='utf-8', errors='replace') as tf:
+                        content = tf.read()
+                    lines = content.splitlines()
+                    text_logs.append({
+                        'file_name': txt_file.name,
+                        'line_count': len(lines),
+                        'content': lines
+                    })
+                    text_line_total += len(lines)
+                except Exception as e:
+                    error_msg = f"读取项目根目录文本日志失败 {txt_file.name}: {e}"
+                    print(f"⚠️  {error_msg}")
+                    text_logs.append({
+                        'file_name': txt_file.name,
+                        'error': str(e)
+                    })
+            if text_logs:
+                root_entry['text_logs'] = text_logs
+                root_entry['text_log_line_count'] = text_line_total
+                all_console_logs['project_root'] = root_entry
+                task_count += 1
+
         if not all_console_logs:
-            print(f"❌ 项目 {project_name} 没有找到console_logs.json文件")
+            print(f"❌ 项目 {project_name} 没有找到console日志或文本日志文件")
             return False
         
         # 创建合并后的数据结构
@@ -96,12 +168,27 @@ class ConsoleLogsMerger:
             'project_name': project_name,
             'merge_timestamp': datetime.now().isoformat(),
             'total_tasks': task_count,
-            'tasks_with_logs': len([t for t in all_console_logs.values() if 'console_logs' in t]),
-            'tasks_with_errors': len([t for t in all_console_logs.values() if 'error' in t]),
+            'tasks_with_logs': len([
+                t for t in all_console_logs.values()
+                if t.get('console_logs') or t.get('text_logs')
+            ]),
+            'tasks_with_errors': len([
+                t for t in all_console_logs.values()
+                if t.get('errors') or t.get('error')
+            ]),
             'console_logs_by_task': all_console_logs,
             'summary': {
+                'total_json_entries': sum(
+                    task.get('json_log_count', task.get('log_count', 0))
+                    for task in all_console_logs.values()
+                ),
+                'total_text_line_entries': sum(
+                    task.get('text_log_line_count', 0)
+                    for task in all_console_logs.values()
+                ),
                 'total_log_entries': sum(
-                    task.get('log_count', 0) for task in all_console_logs.values()
+                    task.get('json_log_count', task.get('log_count', 0)) + task.get('text_log_line_count', 0)
+                    for task in all_console_logs.values()
                 ),
                 'available_tasks': list(all_console_logs.keys())
             }
@@ -149,15 +236,31 @@ class ConsoleLogsMerger:
         """读取项目的frontend_original.jsx和合并后的console_logs.json"""
         
         # 标准化项目名称（移除后缀）
-        if project_name.endswith("_simple_project_runnable"):
-            base_project_name = project_name.replace("_simple_project_runnable", "_simple_project")
-        elif project_name.endswith("_runnable"):
-            base_project_name = project_name.replace("_runnable", "")
-        else:
-            base_project_name = project_name
+        base_project_name = project_name
+        if base_project_name.endswith("_restructured"):
+            base_project_name = base_project_name[:-len("_restructured")]
+
+        if base_project_name.endswith("_simple_project_runnable"):
+            base_project_name = base_project_name.replace("_simple_project_runnable", "_simple_project")
+        elif base_project_name.endswith("_runnable"):
+            base_project_name = base_project_name[:-len("_runnable")]
         
-        # 读取frontend_original.jsx
-        frontend_file = self.debug_projects_dir / base_project_name / "frontend_original.jsx"
+        # 读取frontend_original.jsx（尝试多种目录）
+        candidate_project_dirs = []
+        if project_name not in candidate_project_dirs:
+            candidate_project_dirs.append(project_name)
+        if base_project_name not in candidate_project_dirs:
+            candidate_project_dirs.append(base_project_name)
+
+        frontend_file = None
+        candidate_frontend_paths = []
+        for candidate in candidate_project_dirs:
+            potential = self.debug_projects_dir / candidate / "frontend_original.jsx"
+            candidate_frontend_paths.append(potential)
+            if potential.exists():
+                frontend_file = potential
+                break
+
         console_logs_file = self.output_dir / f"{project_name}_merged_console_logs.json"
         
         result = {
@@ -169,7 +272,7 @@ class ConsoleLogsMerger:
         }
         
         # 读取frontend_original.jsx
-        if frontend_file.exists():
+        if frontend_file and frontend_file.exists():
             try:
                 with open(frontend_file, 'r', encoding='utf-8') as f:
                     result['frontend_original'] = f.read()
@@ -179,7 +282,8 @@ class ConsoleLogsMerger:
                 result['errors'].append(error_msg)
                 print(f"❌ {error_msg}")
         else:
-            error_msg = f"Frontend文件不存在: {frontend_file}"
+            candidate_str = ', '.join(str(path) for path in candidate_frontend_paths) or '无候选路径'
+            error_msg = f"Frontend文件不存在，尝试路径: {candidate_str}"
             result['errors'].append(error_msg)
             print(f"❌ {error_msg}")
         

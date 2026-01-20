@@ -11,14 +11,21 @@ load_dotenv()
 API_BASE_URL = "https://aigc-api.hkust-gz.edu.cn/v1"
 API_KEY = "8ef4c3ccf5f14ee6ad39dccaf1daef545aa3af0833ce4301a561ace8331947b2"
 
+
+API_KEY_4_DEEPSEEK = "sk-e1844037a3514fc5ac6292e4c394eb30"
 # Model Configuration
-DEFAULT_MODEL = "gpt-4"
-ALTERNATIVE_MODEL = "gpt-4o"
+DEFAULT_MODEL = "Qwen"
+# DEFAULT_MODEL = "DeepSeek-R1-671B"
+# DEFAULT_MODEL = "gpt-4"
+ALTERNATIVE_MODEL = "gpt-4"
 
 # Generation Settings
 MAX_TOKENS = 8000
 TEMPERATURE = 0.7
 TOP_P = 0.9
+
+# Qwen-specific settings
+ENABLE_THINKING = False # True for enable_thinking positive, False for enable_thinking negative.
 
 # Output Configuration
 OUTPUT_DIR = "generated_websites"

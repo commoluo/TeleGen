@@ -12,6 +12,7 @@ import json
 import subprocess
 import time
 import signal
+import shutil
 import requests
 from dotenv import load_dotenv
 from pathlib import Path
@@ -81,6 +82,65 @@ def create_single_project_tasks(project_name, port=3000, json_line=None):
             f.write(json.dumps(task, ensure_ascii=False) + '\n')
     return task_file
 
+def handle_install_failure(project_name, port, json_line, component, results_dir, script_dir,
+                           install_process=None, stage="failure", stdout=None, stderr=None,
+                           error_message=None):
+    """在发生错误时，确保生成任务文件、结果目录并记录详细日志。"""
+    try:
+        print(f"🛠️ 正在记录 {component} 阶段的失败日志 ({stage})...")
+        original_cwd = Path.cwd()
+        try:
+            os.chdir(script_dir)
+            task_file = create_single_project_tasks(project_name, port, json_line=json_line)
+        finally:
+            os.chdir(original_cwd)
+
+        task_file_path = Path(script_dir) / task_file
+        absolute_results_root = Path("/Users/luoyujia/Downloads/WebGen-Bench-main/webvoyager/webvoyager_results")
+        output_dir = absolute_results_root / project_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 复制任务文件，方便后续调试
+        task_file_destination = output_dir / task_file_path.name
+        try:
+            shutil.copyfile(task_file_path, task_file_destination)
+        except Exception as copy_err:
+            print(f"⚠️ 复制任务文件到结果目录时出错: {copy_err}")
+
+        log_file_path = output_dir / f"{component}_{stage}_failure_log.txt"
+        captured_stdout = stdout if stdout is not None else (install_process.stdout if install_process else "")
+        captured_stderr = stderr if stderr is not None else (install_process.stderr if install_process else "")
+        return_code = None
+        if install_process is not None:
+            return_code = install_process.returncode
+
+        with open(log_file_path, 'w', encoding='utf-8') as log_file:
+            log_file.write(f"Component: {component}\n")
+            log_file.write(f"Stage: {stage}\n")
+            if return_code is not None:
+                log_file.write(f"Return Code: {return_code}\n")
+            if error_message:
+                log_file.write(f"Error Message: {error_message}\n")
+            log_file.write("\n" + "=" * 20 + " STDOUT " + "=" * 20 + "\n")
+            log_file.write(captured_stdout or "No stdout.")
+            log_file.write("\n" + "=" * 20 + " STDERR " + "=" * 20 + "\n")
+            log_file.write(captured_stderr or "No stderr.")
+
+        print(f"✅ 失败日志已保存到: {log_file_path}")
+    except Exception as err:
+        print(f"⚠️ 记录安装失败信息时发生异常: {err}")
+
+def should_skip_existing_results(project_name, results_dir):
+    """检查是否已经存在测试结果文件，若存在则跳过本次测试。"""
+    try:
+        output_dir = Path(results_dir) / project_name
+        if output_dir.exists() and any(output_dir.iterdir()):
+            print(f"⏭️ 检测到已有测试结果目录: {output_dir}，将跳过该项目的测试。")
+            return True
+    except Exception as e:
+        print(f"⚠️ 检查已有结果目录时出错: {e}")
+    return False
+
 def check_server_health(ports, timeout=60):
     """检查一组端口是否都已被监听"""
     print(f"⏳ 等待服务器启动 (最多 {timeout} 秒)...")
@@ -112,10 +172,10 @@ def check_server_health(ports, timeout=60):
     return False
 
 def check_process_startup(process, name, timeout=30):
-    """检查进程是否成功启动"""
+    """检查进程是否成功启动，返回 (is_ok, stdout, stderr)。"""
     print(f"⏳ 检查{name}进程启动状态...")
     start_time = time.time()
-    
+
     while time.time() - start_time < timeout:
         poll_result = process.poll()
         if poll_result is not None:
@@ -128,20 +188,29 @@ def check_process_startup(process, name, timeout=30):
             if stderr:
                 print(f"=== {name} STDERR ===")
                 print(stderr[:1000])  # 限制输出长度
-            return False
-        
+            return False, stdout, stderr
+
         time.sleep(1)
-    
+
     print(f"✅ {name}进程启动正常，PID: {process.pid}")
-    return True
+    return True, "", ""
 
 def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=False, use_debug_logged=False, use_optimized=False):
     """运行WebVoyager测试"""
     
+    script_dir = Path(__file__).parent
     print(f"--- 步骤 1: 加载环境变量 ---")
-    env_path = Path(__file__).parent / '.env'
+    env_path = script_dir / '.env'
     if not env_path.exists():
         print(f"❌ 错误: .env 文件未找到于 {env_path}")
+        handle_install_failure(
+            project_name, port, json_line,
+            component="environment",
+            results_dir=str(Path("/Users/luoyujia/Downloads/WebGen-Bench-main/webvoyager/webvoyager_results")),
+            script_dir=Path(__file__).parent,
+            stage="env_missing",
+            error_message=f".env not found at {env_path}"
+        )
         return False
     load_dotenv(dotenv_path=env_path)
 
@@ -149,7 +218,6 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
     print("✅ .env环境变量已加载，API Key将由WebVoyager自动读取。")
 
     # 从 .env 或使用默认值获取配置
-    script_dir = Path(__file__).parent
     
     if use_organized:
         # 使用organized_optimized_code目录
@@ -171,7 +239,8 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
         )
     
     webvoyager_dir = os.getenv("WEBVOYAGER_DIR", str(script_dir.parent / "webvoyager"))
-    results_dir = os.getenv("RESULTS_DIR", str(script_dir / "webvoyager_results"))
+    default_results_dir = script_dir.parent / "webvoyager" / "webvoyager_results"
+    results_dir = os.getenv("RESULTS_DIR", str(default_results_dir))
 
     if use_organized or use_debug_logged or use_optimized:
         # 对于 organized, debug_logged, optimized 模式，直接使用project_name
@@ -184,7 +253,19 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
 
     if not project_path.exists():
         print(f"❌ 错误: 项目不存在: {project_path}")
+        handle_install_failure(
+            project_name, port, json_line,
+            component="project",
+            results_dir=results_dir,
+            script_dir=script_dir,
+            stage="missing_project",
+            error_message=f"Project path not found: {project_path}"
+        )
         return False
+
+    # 若已有测试结果，直接跳过
+    if should_skip_existing_results(project_name, results_dir):
+        return True
 
     # 步骤0: 清理指定端口上的进程
     print(f"\n--- 步骤 0: 清理端口 {port} 和 5001 ---")
@@ -218,6 +299,7 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
     server_process = None
     backend_process = None
     original_cwd = Path.cwd()
+    task_file = f"./webvoyager_task_{project_name}.jsonl"
     print(f"进入前端前当前工作目录: {os.getcwd()}")
     try:
         # 启动前端
@@ -236,6 +318,15 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
                 print(install_process.stderr, flush=True)
                 print("=== STDOUT ===")
                 print(install_process.stdout, flush=True)
+                handle_install_failure(
+                    project_name, port, json_line,
+                    component="frontend",
+                    results_dir=results_dir,
+                    script_dir=script_dir,
+                    install_process=install_process,
+                    stage="npm_install",
+                    error_message="frontend npm install failed"
+                )
                 return False
             else:
                 print("✅ 前端 npm install 成功完成")
@@ -258,10 +349,29 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
             print(f"前端服务器进程PID: {server_process.pid}")
             
             # 检查前端进程启动状态
-            if not check_process_startup(server_process, "前端", timeout=10):
+            frontend_ok, frontend_stdout, frontend_stderr = check_process_startup(server_process, "前端", timeout=10)
+            if not frontend_ok:
+                handle_install_failure(
+                    project_name, port, json_line,
+                    component="frontend",
+                    results_dir=results_dir,
+                    script_dir=script_dir,
+                    stage="startup",
+                    stdout=frontend_stdout,
+                    stderr=frontend_stderr,
+                    error_message="frontend process exited unexpectedly"
+                )
                 return False
         else:
             print(f"⚠️ 前端目录不存在，跳过前端启动。")
+            handle_install_failure(
+                project_name, port, json_line,
+                component="frontend",
+                results_dir=results_dir,
+                script_dir=script_dir,
+                stage="missing_directory",
+                error_message="frontend directory not found"
+            )
             return False
 
         # 启动后端
@@ -278,6 +388,15 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
             print(install_process.stderr)
             print("=== STDOUT ===")
             print(install_process.stdout)
+            handle_install_failure(
+                project_name, port, json_line,
+                component="backend",
+                results_dir=results_dir,
+                script_dir=script_dir,
+                install_process=install_process,
+                stage="npm_install",
+                error_message="backend npm install failed"
+            )
             return False
         else:
             print("✅ 后端 npm install 成功完成")
@@ -296,7 +415,18 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
         print(f"后端服务器进程PID: {backend_process.pid}")
         
         # 检查后端进程启动状态
-        if not check_process_startup(backend_process, "后端", timeout=10):
+        backend_ok, backend_stdout, backend_stderr = check_process_startup(backend_process, "后端", timeout=10)
+        if not backend_ok:
+            handle_install_failure(
+                project_name, port, json_line,
+                component="backend",
+                results_dir=results_dir,
+                script_dir=script_dir,
+                stage="startup",
+                stdout=backend_stdout,
+                stderr=backend_stderr,
+                error_message="backend process exited unexpectedly"
+            )
             return False
 
         # 创建测试任务
@@ -314,6 +444,14 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
         
         if not check_server_health(ports_to_check):
             print("❌ 服务器启动失败")
+            handle_install_failure(
+                project_name, port, json_line,
+                component="services",
+                results_dir=results_dir,
+                script_dir=script_dir,
+                stage="health_check",
+                error_message=f"Port readiness failed for {ports_to_check}"
+            )
             return False
         
         # 运行WebVoyager测试
@@ -352,11 +490,29 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
             print(result.stdout)
             print("--- WebVoyager STDERR ---")
             print(result.stderr)
+            handle_install_failure(
+                project_name, port, json_line,
+                component="webvoyager",
+                results_dir=results_dir,
+                script_dir=script_dir,
+                stage="run",
+                stdout=result.stdout,
+                stderr=result.stderr,
+                error_message="WebVoyager execution failed"
+            )
         
         return result.returncode == 0
         
     except Exception as e:
         print(f"❌ 测试过程中发生错误: {e}")
+        handle_install_failure(
+            project_name, port, json_line,
+            component="test_runner",
+            results_dir=results_dir,
+            script_dir=script_dir,
+            stage="exception",
+            error_message=str(e)
+        )
         return False
         
     finally:

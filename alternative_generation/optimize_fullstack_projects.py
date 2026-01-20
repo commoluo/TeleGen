@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 批量优化 fullstack 项目的 frontend.jsx 文件
+主要作用是在代码中插入logs
 用法：python optimize_fullstack_projects.py [options]
 """
 import os

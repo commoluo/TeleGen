@@ -159,11 +159,11 @@ Compare JSX implementation against console logs to identify:
 - Validate fixes don't introduce new issues
 
 ## Output Requirements:
-- Return ONLY the JSX file (complete, functional code)
+- Primary Directive: Your final and only output must be the entire and complete JSX file with all fixes applied. Do not provide explanations, summaries of changes, or partial code snippets. The response must be the full file content.
 - **CRITICAL**: Maintain the exact same format as the input JSX file
 - Modify ONLY the content and code logic, never the file structure or formatting
 - Include ALL fixes needed for console log alignment
-- If no bugs found, return original JSX unchanged  
+- If no bugs found, return original JSX unchanged
 - NO explanatory text, comments, or additional content
 - File must be complete and ready for use
 

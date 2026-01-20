@@ -60,7 +60,7 @@ def main():
             sys.exit(1)
         
         # 获取所有以 "full_run_with_api_doc_" 开头并以 "_runnable" 结尾的项目
-        project_pattern = r"full_run_with_api_doc_(\d+)_runnable"
+        project_pattern = r"full_run_with_api_doc_(\d+)_restructured"
         for item in os.listdir(target_dir):
             if re.match(project_pattern, item):
                 projects_to_test.append(item)
@@ -77,7 +77,7 @@ def main():
             sys.exit(1)
         
         # 获取所有以 "full_run_with_api_doc_" 开头并以 "_restructured" 结尾的项目
-        project_pattern = r"full_run_with_api_doc_(\d+)_runnable_optimized_restructured"
+        project_pattern = r"full_run_with_api_doc_(\d+)_restructured_optimized_restructured"
         for item in os.listdir(target_dir):
             if re.match(project_pattern, item):
                 projects_to_test.append(item)

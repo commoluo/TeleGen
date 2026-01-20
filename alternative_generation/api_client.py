@@ -7,7 +7,7 @@ import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-from config import get_api_headers, get_chat_completion_url, DEFAULT_MODEL, MAX_TOKENS
+from config import get_api_headers, get_chat_completion_url, DEFAULT_MODEL, MAX_TOKENS, ENABLE_THINKING
 
 class UniversityAPIClient:
     """Client for direct communication with university's GPT-4 API"""
@@ -89,11 +89,12 @@ class UniversityAPIClient:
             "messages": messages,
             "temperature": temperature,
             "top_p": top_p,
-            "stream": stream
+            "stream": stream,
+            "chat_template_kwargs": {
+                "enable_thinking": ENABLE_THINKING
+            }
         }
         
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
         
         try:
             print(f"Sending request to {self.url}")
@@ -108,7 +109,7 @@ class UniversityAPIClient:
                         self.url,
                         headers=self.headers,
                         json=payload,
-                        timeout=60,
+                        timeout=600,
                         verify=False  # Disable SSL verification if there are certificate issues
                     )
                     break  # If successful, break out of retry loop
@@ -124,6 +125,7 @@ class UniversityAPIClient:
             
             if response.status_code == 200:
                 response_data = response.json()
+                print(response)
                 transformed_data = self._transform_response(response_data)
                 print("✅ Request successful")
                 return transformed_data

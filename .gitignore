@@ -7,10 +7,30 @@ __pycache__
 downloads
 wandb
 
+# 输出和结果目录
 outputs
+outputs.zip
 gather_statistics
-alternative_generation/generated_websites
-alternative_generation/webvoyager_current_backup_20250717_164247
-alternative_generation/results_for_1_cycle
-alternative_generation/results_for_2_cycle
-webvoyager
+
+# Alternative Generation 数据目录
+alternative_generation/generated_websites/
+alternative_generation/webvoyager_current_backup_*/
+alternative_generation/results_for_*_cycle/
+alternative_generation/results_for_*_cycle_*/
+alternative_generation/debug_logged_projects/
+alternative_generation/optimized_code/
+alternative_generation/merged_console_logs/
+alternative_generation/optimization_logs/
+alternative_generation/__pycache__/
+alternative_generation/api_docs/
+
+# WebVoyager 数据目录
+webvoyager/webvoyager_results/
+webvoyager/__pycache__/
+webvoyager/downloads/
+webvoyager/data/
+
+# 大型数据文件
+*.zip
+*.tar.gz
+*.log
