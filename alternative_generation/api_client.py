@@ -1,21 +1,29 @@
 """
-Direct API client for university's GPT-4 API
-Handles the API format compatibility issues directly
+Direct API client for OpenAI-compatible endpoints (DashScope by default)
 """
 import requests
 import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-from config import get_api_headers, get_chat_completion_url, DEFAULT_MODEL, MAX_TOKENS, ENABLE_THINKING
+from config import (
+    get_api_headers,
+    get_chat_completion_url,
+    resolve_api_base_url,
+    DEFAULT_MODEL,
+    MAX_TOKENS,
+    MAX_CONTINUATION_ROUNDS,
+    OUTPUT_END_MARKER,
+)
 
 class UniversityAPIClient:
-    """Client for direct communication with university's GPT-4 API"""
+    """Client for direct communication with OpenAI-compatible chat completion API"""
     
     def __init__(self, model: str = DEFAULT_MODEL):
         self.model = model
-        self.headers = get_api_headers()
-        self.url = get_chat_completion_url()
+        self.base_url = resolve_api_base_url(model)
+        self.headers = get_api_headers(model=model, base_url=self.base_url)
+        self.url = get_chat_completion_url(model=model, base_url=self.base_url)
     
     def _transform_response(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -72,7 +80,7 @@ class UniversityAPIClient:
         stream: bool = False
     ) -> Dict[str, Any]:
         """
-        Send a chat completion request to the university API
+        Send a chat completion request to OpenAI-compatible API
         
         Args:
             messages: List of message dictionaries with 'role' and 'content'
@@ -89,11 +97,12 @@ class UniversityAPIClient:
             "messages": messages,
             "temperature": temperature,
             "top_p": top_p,
-            "stream": stream,
-            "chat_template_kwargs": {
-                "enable_thinking": ENABLE_THINKING
-            }
+            "stream": stream
         }
+
+        if max_tokens is None:
+            max_tokens = MAX_TOKENS
+        payload["max_tokens"] = max_tokens
         
         
         try:
@@ -109,8 +118,7 @@ class UniversityAPIClient:
                         self.url,
                         headers=self.headers,
                         json=payload,
-                        timeout=600,
-                        verify=False  # Disable SSL verification if there are certificate issues
+                        timeout=600
                     )
                     break  # If successful, break out of retry loop
                 except (requests.exceptions.ConnectionError, ConnectionResetError) as e:
@@ -172,6 +180,158 @@ class UniversityAPIClient:
                     "code": "json_parse_failed"
                 }
             }
+
+    def _extract_message_content(self, response: Dict[str, Any]) -> str:
+        choices = response.get("choices", []) if isinstance(response, dict) else []
+        if not choices:
+            return ""
+        return choices[0].get("message", {}).get("content", "") or ""
+
+    def _extract_finish_reason(self, response: Dict[str, Any]) -> Optional[str]:
+        choices = response.get("choices", []) if isinstance(response, dict) else []
+        if not choices:
+            return None
+        return choices[0].get("finish_reason")
+
+    def _merge_usage(self, responses: List[Dict[str, Any]]) -> Dict[str, int]:
+        merged = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        for response in responses:
+            usage = response.get("usage", {}) if isinstance(response, dict) else {}
+            for key in merged:
+                value = usage.get(key, 0)
+                if isinstance(value, int):
+                    merged[key] += value
+        return merged
+
+    def _find_overlap_size(self, previous: str, current: str, max_window: int = 4000) -> int:
+        if not previous or not current:
+            return 0
+
+        window = min(len(previous), len(current), max_window)
+        for size in range(window, 0, -1):
+            if previous[-size:] == current[:size]:
+                return size
+        return 0
+
+    def _merge_continuation_text(self, accumulated: str, chunk: str) -> str:
+        if not accumulated:
+            return chunk
+        overlap = self._find_overlap_size(accumulated, chunk)
+        return accumulated + chunk[overlap:]
+
+    def _strip_end_marker(self, content: str, end_marker: str) -> str:
+        if end_marker not in content:
+            return content.strip()
+        return content.split(end_marker, 1)[0].rstrip()
+
+    def chat_completion_with_continuation(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: Optional[int] = None,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        stream: bool = False,
+        end_marker: str = OUTPUT_END_MARKER,
+        max_rounds: int = MAX_CONTINUATION_ROUNDS,
+    ) -> Dict[str, Any]:
+        """Request a long completion, auto-continue on truncation, and stitch all chunks."""
+        if max_rounds < 1:
+            max_rounds = 1
+
+        base_messages = list(messages)
+        accumulated_content = ""
+        round_responses: List[Dict[str, Any]] = []
+
+        for round_index in range(max_rounds):
+            if round_index == 0:
+                request_messages = base_messages
+            else:
+                tail = accumulated_content[-1200:]
+                request_messages = base_messages + [
+                    {
+                        "role": "assistant",
+                        "content": accumulated_content,
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous response was incomplete or missing the required end marker. "
+                            "Continue from exactly after the last emitted character. "
+                            "Do not restart. Do not repeat earlier content unless a tiny overlap is necessary. "
+                            f"When the full file is complete, append this exact marker on its own line: {end_marker}\n\n"
+                            f"Last emitted tail for reference:\n{tail}"
+                        ),
+                    },
+                ]
+
+            response = self.chat_completion(
+                messages=request_messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                stream=stream,
+            )
+
+            if not response or "error" in response:
+                return response if isinstance(response, dict) else {
+                    "error": {
+                        "message": "Unknown API error during continuation",
+                        "type": "api_error",
+                        "code": "unknown_error",
+                    }
+                }
+
+            round_responses.append(response)
+            chunk = self._extract_message_content(response)
+            if not chunk.strip():
+                return {
+                    "error": {
+                        "message": f"Empty content returned during continuation round {round_index + 1}",
+                        "type": "empty_response",
+                        "code": "empty_response",
+                    }
+                }
+
+            accumulated_content = self._merge_continuation_text(accumulated_content, chunk)
+            finish_reason = self._extract_finish_reason(response)
+
+            if end_marker in accumulated_content:
+                final_content = self._strip_end_marker(accumulated_content, end_marker)
+                return {
+                    "id": response.get("id", f"chatcmpl-{int(time.time())}"),
+                    "object": "chat.completion",
+                    "created": response.get("created", int(time.time())),
+                    "model": response.get("model", self.model),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": final_content},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": self._merge_usage(round_responses),
+                    "continuation_rounds": round_index + 1,
+                    "raw_finish_reason": finish_reason,
+                }
+
+            if finish_reason not in {"length", None}:
+                # One more round may still be needed if the model forgot the marker.
+                continue
+
+        return {
+            "error": {
+                "message": (
+                    f"Response remained incomplete after {max_rounds} rounds. "
+                    f"Required end marker not found: {end_marker}"
+                ),
+                "type": "truncation_error",
+                "code": "continuation_exhausted",
+            }
+        }
     
     def test_connection(self) -> bool:
         """Test the API connection with a simple request"""

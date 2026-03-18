@@ -13,6 +13,7 @@ outputs.zip
 gather_statistics
 
 # Alternative Generation 数据目录
+alternative_generation/
 alternative_generation/generated_websites/
 alternative_generation/webvoyager_current_backup_*/
 alternative_generation/results_for_*_cycle/
@@ -29,6 +30,10 @@ webvoyager/webvoyager_results/
 webvoyager/__pycache__/
 webvoyager/downloads/
 webvoyager/data/
+
+# OpenHands 工作区和验证结果
+openhands_workspace/
+validation_results/
 
 # 大型数据文件
 *.zip

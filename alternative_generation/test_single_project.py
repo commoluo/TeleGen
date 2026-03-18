@@ -17,6 +17,37 @@ import requests
 from dotenv import load_dotenv
 from pathlib import Path
 
+
+def run_npm_install_with_retries(component_name, timeout=300):
+    """执行 npm install，失败时自动重试 --force 与 --legacy-peer-deps。"""
+    attempts = [
+        ["npm", "install"],
+        ["npm", "install", "--force"],
+        ["npm", "install", "--legacy-peer-deps"],
+    ]
+    logs = []
+    last_process = None
+
+    for idx, cmd in enumerate(attempts, start=1):
+        cmd_text = " ".join(cmd)
+        print(f"执行命令: {cmd_text} ({component_name}, attempt {idx}/{len(attempts)})")
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        last_process = process
+
+        logs.append(
+            f"=== Attempt {idx}: {cmd_text} ===\n"
+            f"Return Code: {process.returncode}\n"
+            f"--- STDOUT ---\n{process.stdout or ''}\n"
+            f"--- STDERR ---\n{process.stderr or ''}\n"
+        )
+
+        if process.returncode == 0:
+            return True, process, "\n".join(logs)
+
+        print(f"⚠️ {component_name} install attempt {idx} 失败，退出码: {process.returncode}")
+
+    return False, last_process, "\n".join(logs)
+
 # 新增：id到项目目录名的转换方法
 def id_to_project_dir(project_id):
     """
@@ -96,8 +127,7 @@ def handle_install_failure(project_name, port, json_line, component, results_dir
             os.chdir(original_cwd)
 
         task_file_path = Path(script_dir) / task_file
-        absolute_results_root = Path("/Users/luoyujia/Downloads/WebGen-Bench-main/webvoyager/webvoyager_results")
-        output_dir = absolute_results_root / project_name
+        output_dir = Path(results_dir) / project_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # 复制任务文件，方便后续调试
@@ -203,10 +233,11 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
     env_path = script_dir / '.env'
     if not env_path.exists():
         print(f"❌ 错误: .env 文件未找到于 {env_path}")
+        default_results_root = Path(__file__).parent.parent / "webvoyager" / "webvoyager_results"
         handle_install_failure(
             project_name, port, json_line,
             component="environment",
-            results_dir=str(Path("/Users/luoyujia/Downloads/WebGen-Bench-main/webvoyager/webvoyager_results")),
+            results_dir=str(default_results_root),
             script_dir=Path(__file__).parent,
             stage="env_missing",
             error_message=f".env not found at {env_path}"
@@ -221,21 +252,21 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
     
     if use_organized:
         # 使用organized_optimized_code目录
-        projects_dir = script_dir / "organized_optimized_code"
+        projects_dir = Path(os.getenv("ORGANIZED_PROJECTS_DIR", str(script_dir / "organized_optimized_code")))
         print(f"使用organized模式，项目目录: {projects_dir}")
     elif use_debug_logged:
         # 使用debug_logged_projects目录
-        projects_dir = script_dir / "debug_logged_projects"
+        projects_dir = Path(os.getenv("DEBUG_LOGGED_PROJECTS_DIR", str(script_dir / "debug_logged_projects")))
         print(f"使用debug_logged模式，项目目录: {projects_dir}")
     elif use_optimized:
         # 使用optimized_code目录
-        projects_dir = script_dir / "optimized_code"
+        projects_dir = Path(os.getenv("OPTIMIZED_PROJECTS_DIR", str(script_dir / "optimized_code")))
         print(f"使用optimized模式，项目目录: {projects_dir}")
     else:
         # projects_dir现在使用绝对路径，防止工作目录影响
         projects_dir = os.getenv(
             "PROJECTS_DIR",
-            "/Users/luoyujia/Downloads/WebGen-Bench-main/alternative_generation/generated_websites/fullstack_projects_20250717_174459"
+            str(script_dir / "generated_websites" / "fullstack_projects")
         )
     
     webvoyager_dir = os.getenv("WEBVOYAGER_DIR", str(script_dir.parent / "webvoyager"))
@@ -310,14 +341,10 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
             print(f"进入前端前当前工作目录(已到项目根): {os.getcwd()}", flush=True)
             os.chdir(frontend_path)
             print(f"进入前端后当前工作目录: {os.getcwd()}", flush=True)
-            print("执行命令: npm install (frontend)")
-            install_process = subprocess.run(['npm', 'install'], capture_output=True, text=True, timeout=300)
-            if install_process.returncode != 0:
+            frontend_ok, install_process, frontend_install_logs = run_npm_install_with_retries("frontend", timeout=300)
+            if not frontend_ok:
                 print("❌ 前端 npm install 失败:", flush=True)
-                print("=== STDERR ===")
-                print(install_process.stderr, flush=True)
-                print("=== STDOUT ===")
-                print(install_process.stdout, flush=True)
+                print(frontend_install_logs, flush=True)
                 handle_install_failure(
                     project_name, port, json_line,
                     component="frontend",
@@ -325,6 +352,8 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
                     script_dir=script_dir,
                     install_process=install_process,
                     stage="npm_install",
+                    stdout=frontend_install_logs,
+                    stderr="",
                     error_message="frontend npm install failed"
                 )
                 return False
@@ -380,14 +409,10 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
         print(f"进入后端目录: {backend_path}")
         os.chdir(backend_path)
         print(f"进入后端后当前工作目录: {os.getcwd()}")
-        print("执行命令: npm install (backend)")
-        install_process = subprocess.run(['npm', 'install'], capture_output=True, text=True, timeout=300)
-        if install_process.returncode != 0:
+        backend_ok, install_process, backend_install_logs = run_npm_install_with_retries("backend", timeout=300)
+        if not backend_ok:
             print("❌ 后端 npm install 失败:")
-            print("=== STDERR ===")
-            print(install_process.stderr)
-            print("=== STDOUT ===")
-            print(install_process.stdout)
+            print(backend_install_logs)
             handle_install_failure(
                 project_name, port, json_line,
                 component="backend",
@@ -395,6 +420,8 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
                 script_dir=script_dir,
                 install_process=install_process,
                 stage="npm_install",
+                stdout=backend_install_logs,
+                stderr="",
                 error_message="backend npm install failed"
             )
             return False
@@ -471,10 +498,15 @@ def run_webvoyager_test(project_name, port=3000, json_line=None, use_organized=F
             '--max_iter', os.getenv("WEBVOYAGER_MAX_ITER", "10"),
             '--max_attached_imgs', os.getenv("WEBVOYAGER_MAX_ATTACHED_IMGS", "3"),
             '--temperature', os.getenv("WEBVOYAGER_TEMPERATURE", "0.7"),
+            '--api_model', os.getenv("WEBVOYAGER_API_MODEL", "qwen3.5-flash"),
             '--output_dir', str(output_dir_abs),
             '--window_width', os.getenv("WEBVOYAGER_WINDOW_WIDTH", "1024"),
             '--window_height', os.getenv("WEBVOYAGER_WINDOW_HEIGHT", "768")
         ]
+
+        api_base_url = os.getenv("WEBVOYAGER_API_BASE_URL")
+        if api_base_url:
+            webvoyager_cmd.extend(['--api_base_url', api_base_url])
         
         print(f"执行命令: {' '.join(webvoyager_cmd)}")
         

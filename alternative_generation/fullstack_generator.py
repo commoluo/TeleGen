@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 from api_client import UniversityAPIClient
-from config import DEFAULT_MODEL, OUTPUT_DIR
+from config import DEFAULT_MODEL, OUTPUT_DIR, OUTPUT_END_MARKER
 from fixed_improved_prompts import (
     create_structured_frontend_prompt,
     create_structured_backend_prompt, 
@@ -80,16 +80,26 @@ class FullStackGenerator:
         messages = [
             {
                 "role": "system",
-                "content": f"You are a professional {component_type} developer specialized in generating high-quality {component_type} code."
+                "content": (
+                    f"You are a professional {component_type} developer specialized in generating high-quality {component_type} code. "
+                    f"Return only the complete final code for this component. When the full output is complete, append this exact marker on its own line: {OUTPUT_END_MARKER}"
+                )
             },
             {
                 "role": "user",
-                "content": prompts[component_type]
+                "content": (
+                    f"{prompts[component_type]}\n\n"
+                    f"Important output rules:\n"
+                    f"- Return only the complete final code for this single component.\n"
+                    f"- No markdown fences, no explanations.\n"
+                    f"- If the response needs multiple rounds, continue when asked.\n"
+                    f"- Only after the file is fully complete, append this exact marker on its own line: {OUTPUT_END_MARKER}"
+                )
             }
         ]
         
         start_time = time.time()
-        response = self.client.chat_completion(
+        response = self.client.chat_completion_with_continuation(
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.7

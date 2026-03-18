@@ -182,8 +182,7 @@ def call_gpt4v_api(args, openai_client, messages):
         try:
             logging.info("Calling %s API…", args.api_model)
             openai_response = openai_client.chat.completions.create(
-                # model=args.api_model,
-                model='gpt-4',
+                model=args.api_model,
                 messages=messages,
                 max_tokens=1000,
                 seed=args.seed,
@@ -324,8 +323,8 @@ def run_single_task(task: Dict[str, Any], args_dict: Dict[str, Any]):
 
     # Per‑process OpenAI client（自定义base_url和api_key）
     client = OpenAI(
-        api_key="8ef4c3ccf5f14ee6ad39dccaf1daef545aa3af0833ce4301a561ace8331947b2",
-        base_url="https://aigc-api.hkust-gz.edu.cn/v1"
+        api_key=args.api_key,
+        base_url=args.api_base_url,
     )
 
     options = driver_config(args)
@@ -612,7 +611,8 @@ def main():
     parser.add_argument("--test_file", type=str, default="data/test.json")
     parser.add_argument("--max_iter", type=int, default=5)
     parser.add_argument("--api_key", default="key", type=str, help="YOUR_OPENAI_API_KEY")
-    parser.add_argument("--api_model", default="gpt-4o", type=str)
+    parser.add_argument("--api_model", default=os.getenv("WEBVOYAGER_API_MODEL", "qwen3.5-flash"), type=str)
+    parser.add_argument("--api_base_url", default=os.getenv("WEBVOYAGER_API_BASE_URL", "https://aigc-api.hkust-gz.edu.cn/v1"), type=str)
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--max_attached_imgs", type=int, default=1)
@@ -647,7 +647,29 @@ def main():
 
     # 支持自动从环境变量读取API key
     if args.api_key == "key":
-        args.api_key = os.getenv("OPENAI_API_KEY") or os.getenv("WEBVOYAGER_API_KEY")
+        base_url_lower = (args.api_base_url or "").lower()
+
+        if "dashscope.aliyuncs.com" in base_url_lower:
+            args.api_key = (
+                os.getenv("QWEN_API_KEY")
+                or os.getenv("DASHSCOPE_API_KEY")
+                or os.getenv("WEBVOYAGER_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+            )
+        elif "api.deepseek.com" in base_url_lower:
+            args.api_key = (
+                os.getenv("DEEPSEEK_API_KEY")
+                or os.getenv("WEBVOYAGER_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+            )
+        else:
+            args.api_key = (
+                os.getenv("WEBVOYAGER_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or os.getenv("QWEN_API_KEY")
+                or os.getenv("DASHSCOPE_API_KEY")
+                or os.getenv("DEEPSEEK_API_KEY")
+            )
     if not args.api_key:
         raise RuntimeError("No API key provided! Please set --api_key or .env variable.")
 

@@ -10,6 +10,7 @@ Code Optimization Data Reader
 import os
 import sys
 from pathlib import Path
+from typing import Dict, List
 
 # 添加当前目录到路径
 sys.path.append(str(Path(__file__).parent))
@@ -19,8 +20,15 @@ from console_logs_merger import ConsoleLogsMerger
 class CodeOptimizationDataReader:
     """代码优化数据读取器"""
     
-    def __init__(self):
-        self.merger = ConsoleLogsMerger()
+    def __init__(self,
+                 results_debug_dir: str = None,
+                 debug_projects_dir: str = None,
+                 merged_logs_dir: str = None):
+        self.merger = ConsoleLogsMerger(
+            results_debug_dir=results_debug_dir,
+            debug_projects_dir=debug_projects_dir,
+            output_dir=merged_logs_dir
+        )
         self.ensure_merged_data()
     
     def ensure_merged_data(self):
@@ -73,6 +81,51 @@ class CodeOptimizationDataReader:
                                     'timestamp': log_entry.get('timestamp'),
                                     'source': log_entry.get('source', 'console')
                                 })
+
+            # 额外解析文本日志（如 frontend_npm_install_failure_log.txt）
+            for text_log in task_data.get('text_logs', []):
+                file_name = text_log.get('file_name', '')
+                content_lines = text_log.get('content', [])
+                if not isinstance(content_lines, list):
+                    continue
+
+                joined = "\n".join(content_lines)
+                lower_joined = joined.lower()
+                has_failure_file = 'failure_log' in file_name.lower()
+                has_text_error = any(
+                    keyword in lower_joined
+                    for keyword in [
+                        'npm err!',
+                        'eresolve',
+                        'could not resolve dependency',
+                        'module not found',
+                        'syntaxerror',
+                        'typeerror',
+                        'referenceerror',
+                        'process exited unexpectedly',
+                        'build failed',
+                        'frontend npm install failed',
+                        'backend process exited unexpectedly',
+                    ]
+                )
+
+                if has_failure_file or has_text_error:
+                    headline = ''
+                    for line in content_lines:
+                        line_lower = str(line).lower()
+                        if any(k in line_lower for k in ['npm err!', 'eresolve', 'error message:', 'syntaxerror', 'typeerror', 'referenceerror', 'exited unexpectedly']):
+                            headline = str(line).strip()
+                            break
+                    if not headline:
+                        headline = f"文本日志存在失败线索: {file_name}"
+
+                    errors.append({
+                        'task': task_name,
+                        'level': 'error',
+                        'message': headline,
+                        'timestamp': None,
+                        'source': f'text_log:{file_name}'
+                    })
         
         return errors
     
@@ -108,7 +161,9 @@ class CodeOptimizationDataReader:
             'type_error': ['typeerror', 'cannot read property'],
             'reference_error': ['referenceerror', 'is not defined'],
             'network_error': ['network error', 'fetch failed', 'cors'],
-            'build_error': ['build failed', 'compilation error']
+            'build_error': ['build failed', 'compilation error'],
+            'npm_install_error': ['npm err!', 'npm install failed', 'eresolve'],
+            'dependency_conflict': ['could not resolve dependency', 'conflicting peer dependency', 'peeroptional typescript']
         }
         
         for issue_type, patterns in common_patterns.items():
@@ -136,6 +191,12 @@ class CodeOptimizationDataReader:
             
             if any(issue['type'] == 'build_error' for issue in analysis['common_issues']):
                 analysis['recommendations'].append("🔧 修复构建配置问题")
+
+            if any(issue['type'] == 'npm_install_error' for issue in analysis['common_issues']):
+                analysis['recommendations'].append("🔧 修复 npm 安装失败（优先检查 package.json 依赖冲突）")
+
+            if any(issue['type'] == 'dependency_conflict' for issue in analysis['common_issues']):
+                analysis['recommendations'].append("🔧 解决 peer dependency 冲突（如 react-scripts 与 typescript 版本）")
         
         return analysis
     

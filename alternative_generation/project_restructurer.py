@@ -453,11 +453,18 @@ CORS_ORIGIN=http://localhost:3000'''.format(project_name=self.project_name)
                 # 原始逻辑：处理 debug_logged_projects 中的项目
                 # =================================================
                 print("🔍 使用原始项目逻辑...")
-                frontend_file = self.project_path / "frontend_original.jsx"
+                frontend_candidates = [
+                    self.project_path / "frontend_with_debug_logs.jsx",
+                    self.project_path / "frontend_original.jsx",
+                    self.project_path / "frontend.jsx",
+                ]
+                frontend_file = next((path for path in frontend_candidates if path.exists()), None)
                 backend_file = self.project_path / "backend.js"
 
-                if not frontend_file.exists():
-                    print(f"❌ 前端文件不存在: {frontend_file}")
+                if not frontend_file:
+                    print("❌ 前端文件不存在，尝试的路径如下：")
+                    for candidate in frontend_candidates:
+                        print(f"   - {candidate}")
                     return False
 
                 frontend_content = frontend_file.read_text(encoding='utf-8')

@@ -19,13 +19,22 @@ class ConsoleLogsMerger:
     """Console日志合并器"""
     
     def __init__(self, 
-                 results_debug_dir: str = "/Users/luoyujia/Downloads/WebGen-Bench-main/webvoyager/webvoyager_results",
-                 debug_projects_dir: str = "/Users/luoyujia/Downloads/WebGen-Bench-main/alternative_generation/debug_logged_projects",
-                 output_dir: str = "/Users/luoyujia/Downloads/WebGen-Bench-main/alternative_generation/merged_console_logs"):
-        
-        self.results_debug_dir = Path(results_debug_dir)
-        self.debug_projects_dir = Path(debug_projects_dir)
-        self.output_dir = Path(output_dir)
+                 results_debug_dir: Optional[str] = None,
+                 debug_projects_dir: Optional[str] = None,
+                 output_dir: Optional[str] = None):
+
+        script_dir = Path(__file__).resolve().parent
+        default_results = script_dir.parent / "webvoyager" / "webvoyager_results"
+        default_debug_projects = script_dir / "debug_logged_projects"
+        default_output = script_dir / "merged_console_logs"
+
+        env_results = os.getenv("RESULTS_DEBUG_DIR")
+        env_debug_projects = os.getenv("DEBUG_PROJECTS_DIR")
+        env_output = os.getenv("MERGED_LOGS_DIR")
+
+        self.results_debug_dir = Path(results_debug_dir or env_results or default_results)
+        self.debug_projects_dir = Path(debug_projects_dir or env_debug_projects or default_debug_projects)
+        self.output_dir = Path(output_dir or env_output or default_output)
         
         # 创建输出目录
         self.output_dir.mkdir(exist_ok=True)
@@ -254,11 +263,19 @@ class ConsoleLogsMerger:
 
         frontend_file = None
         candidate_frontend_paths = []
+        frontend_candidates = [
+            "frontend_original.jsx",
+            "frontend.jsx",
+        ]
+
         for candidate in candidate_project_dirs:
-            potential = self.debug_projects_dir / candidate / "frontend_original.jsx"
-            candidate_frontend_paths.append(potential)
-            if potential.exists():
-                frontend_file = potential
+            for frontend_name in frontend_candidates:
+                potential = self.debug_projects_dir / candidate / frontend_name
+                candidate_frontend_paths.append(potential)
+                if potential.exists():
+                    frontend_file = potential
+                    break
+            if frontend_file:
                 break
 
         console_logs_file = self.output_dir / f"{project_name}_merged_console_logs.json"

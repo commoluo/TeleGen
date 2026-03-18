@@ -21,21 +21,33 @@ from datetime import datetime
 sys.path.append(str(Path(__file__).parent))
 from code_optimization_reader import CodeOptimizationDataReader
 from api_client import UniversityAPIClient
+from config import DEFAULT_MODEL, OUTPUT_END_MARKER
+from llm_patch_utils import LLMPatchApplier
 
 class BatchCodeOptimizer:
     """批量代码优化器"""
     
     def __init__(self, 
-                 output_dir: str = "/Users/luoyujia/Downloads/WebGen-Bench-main/alternative_generation/optimized_code",
-                 log_dir: str = "/Users/luoyujia/Downloads/WebGen-Bench-main/alternative_generation/optimization_logs"):
+                 output_dir: str = None,
+                 log_dir: str = None,
+                 results_debug_dir: str = None,
+                 debug_projects_dir: str = None,
+                 merged_logs_dir: str = None,
+                 model: str = DEFAULT_MODEL):
         
+        base_dir = Path(__file__).resolve().parent
+
         # 初始化工具
-        self.reader = CodeOptimizationDataReader()
-        self.api_client = UniversityAPIClient()
+        self.reader = CodeOptimizationDataReader(
+            results_debug_dir=results_debug_dir,
+            debug_projects_dir=debug_projects_dir,
+            merged_logs_dir=merged_logs_dir
+        )
+        self.api_client = UniversityAPIClient(model=model)
         
         # 设置输出目录
-        self.output_dir = Path(output_dir)
-        self.log_dir = Path(log_dir)
+        self.output_dir = Path(output_dir) if output_dir else base_dir / "optimized_code"
+        self.log_dir = Path(log_dir) if log_dir else base_dir / "optimization_logs"
         
         # 创建目录
         self.output_dir.mkdir(exist_ok=True)
@@ -94,7 +106,16 @@ class BatchCodeOptimizer:
             print(f"❌ 保存进度失败: {e}")
     
     def _create_optimization_prompt(self, project_name: str, frontend_code: str, console_logs: dict, error_analysis: dict) -> str:
+        error_analysis_json = json.dumps(error_analysis, ensure_ascii=False, indent=2)
         prompt = f"""
+
+                    project_name:
+                    {project_name}
+
+                    detected_error_analysis:
+                    ```json
+                    {error_analysis_json}
+                    ```
 
                     frontend jsx code:
                     ```jsx
@@ -106,12 +127,17 @@ class BatchCodeOptimizer:
                     ```json
                     {console_logs}
                     ```
+
+                    critical instructions:
+                    - If logs show npm install / dependency conflict (e.g. ERESOLVE, peer dependency conflict), you MUST prioritize fixing package.json versions and scripts.
+                    - This input may contain multi-file content markers like // FILE:. You may patch code, config, and package metadata sections when needed.
+                    - Prefer minimal edits directly tied to observed failures.
                     """
         return prompt.strip()
     
-    def _create_messages(self, prompt: str) -> List[Dict]:
+    def _create_patch_messages(self, prompt: str) -> List[Dict]:
         """
-        创建GPT-4消息格式（留空，用户填充）
+        创建 patch 模式消息
         
         Args:
             prompt: 优化提示词
@@ -119,11 +145,11 @@ class BatchCodeOptimizer:
         Returns:
             消息列表
         """
-        # TODO: 用户需要在此处补全消息格式
         messages = [
             {
                 "role": "system",
-                "content": """You are an expert React developer specializing in JSX validation and debugging. Your task is to analyze JSX files against console logs to ensure complete functional alignment.
+                "content": f"""You are an expert frontend engineer specializing in React and build/debug troubleshooting.
+Your task is to fix frontend source bundle based on logs, but you MUST return JSON patch operations instead of full rewritten code.
 
 ## Core Objectives:
 1. **Validate** JSX functionality against recorded console logs
@@ -137,12 +163,15 @@ class BatchCodeOptimizer:
 - Validate all interactive elements (buttons, forms, inputs, etc.)
 - Check element props, state variables, and refs referenced in logs
 - Ensure proper component hierarchy and React patterns
+- If input contains package/config sections, validate dependency versions and scripts against install/build errors
 
 ### Step 2: Console Log Analysis  
 - Parse console_logs.json to understand interaction sequence and timing
 - Map each logged event to corresponding JSX elements or functions
 - Identify required behaviors: state changes, function calls, renders, effects, error messages
 - Note any dynamic content, prop changes, or lifecycle events
+- Treat `[TRACE]` or other debug instrumentation logs as diagnostic breadcrumbs that help locate bugs
+- Use debug logs to infer root causes, but do not assume every temporary trace statement must remain in the final code
 
 ### Step 3: Bug Detection
 Compare JSX implementation against console logs to identify:
@@ -157,6 +186,78 @@ Compare JSX implementation against console logs to identify:
 - Ensure all logged behaviors work exactly as recorded
 - Maintain existing functionality not covered in logs
 - Validate fixes don't introduce new issues
+- For npm/ERESOLVE/peer dependency issues, prioritize targeted edits in `package.json` sections
+
+## Output Requirements:
+- Return STRICT JSON only:
+{{
+  "operations": [
+    {{"op": "replace", "search": "<exact snippet>", "replace": "<new snippet>", "occurrence": "first"}},
+    {{"op": "replace", "search": "...", "replace": "...", "occurrence": "all"}},
+    {{"op": "append", "content": "..."}},
+    {{"op": "prepend", "content": "..."}}
+  ]
+}}
+- Use exact `search` snippets copied from source.
+- Keep operation count as small as possible.
+- If no change needed, return: {{"no_change": true, "operations": []}}
+- No markdown, no explanations, no comments.
+- Append end marker after JSON on a new line: {OUTPUT_END_MARKER}
+
+## Critical Constraints:
+- Preserve file format and structure, only update necessary logic.
+- Focus on functional accuracy to match console logs exactly."""
+            },
+            {
+                "role": "user", 
+                "content": prompt
+            }
+        ]
+        
+        return messages
+
+    def _create_fullfile_messages(self, prompt: str) -> List[Dict]:
+        messages = [
+            {
+                "role": "system",
+                "content": f"""You are an expert frontend engineer specializing in React and build/debug troubleshooting. Your task is to analyze frontend source bundle against logs to ensure complete functional alignment.
+
+## Core Objectives:
+1. **Validate** JSX functionality against recorded console logs
+2. **Identify** discrepancies between expected behavior (logs) and actual implementation
+3. **Repair** any bugs to achieve perfect alignment with console logs
+
+## Analysis Process:
+
+### Step 1: JSX Structure Analysis
+- Verify React component structure and JSX syntax
+- Validate all interactive elements (buttons, forms, inputs, etc.)
+- Check element props, state variables, and refs referenced in logs
+- Ensure proper component hierarchy and React patterns
+- If input contains package/config sections, validate dependency versions and scripts against install/build errors
+
+### Step 2: Console Log Analysis
+- Parse console_logs.json to understand interaction sequence and timing
+- Map each logged event to corresponding JSX elements or functions
+- Identify required behaviors: state changes, function calls, renders, effects, error messages
+- Note any dynamic content, prop changes, or lifecycle events
+- Treat `[TRACE]` or other debug instrumentation logs as diagnostic breadcrumbs that help locate bugs
+- Use debug logs to infer root causes, but do not assume every temporary trace statement must remain in the final code
+
+### Step 3: Bug Detection
+Compare JSX implementation against console logs to identify:
+- Missing state variables or incorrect state management
+- Absent or faulty event handlers and functions
+- Incorrect prop handling or component logic
+- Missing useEffect hooks or lifecycle methods
+- Broken component workflows or state updates
+
+### Step 4: Bug Resolution
+- Fix identified issues while preserving original component design
+- Ensure all logged behaviors work exactly as recorded
+- Maintain existing functionality not covered in logs
+- Validate fixes don't introduce new issues
+- For npm/ERESOLVE/peer dependency issues, prioritize targeted edits in `package.json` sections
 
 ## Output Requirements:
 - Primary Directive: Your final and only output must be the entire and complete JSX file with all fixes applied. Do not provide explanations, summaries of changes, or partial code snippets. The response must be the full file content.
@@ -166,6 +267,7 @@ Compare JSX implementation against console logs to identify:
 - If no bugs found, return original JSX unchanged
 - NO explanatory text, comments, or additional content
 - File must be complete and ready for use
+- When the full output is complete, append this exact marker on its own line: {OUTPUT_END_MARKER}
 
 ## Critical Constraints:
 - Output must be a valid, complete JSX file
@@ -175,12 +277,102 @@ Compare JSX implementation against console logs to identify:
 - Focus on functional accuracy to match console logs exactly"""
             },
             {
-                "role": "user", 
+                "role": "user",
                 "content": prompt
             }
         ]
-        
+
         return messages
+
+    def _create_messages(self, prompt: str) -> List[Dict]:
+        return self._create_patch_messages(prompt)
+
+    def _apply_patch_mode(self, frontend_code: str, prompt: str) -> Dict:
+        messages = self._create_patch_messages(prompt)
+        api_response = self.api_client.chat_completion_with_continuation(
+            messages=messages,
+            max_tokens=3500,
+            temperature=0.1,
+            top_p=0.9
+        )
+
+        if not api_response or 'error' in api_response:
+            return {
+                'success': False,
+                'error': api_response.get('error', {}).get('message', 'Unknown API error') if isinstance(api_response, dict) else 'Unknown API error',
+                'api_response': api_response,
+            }
+
+        if 'choices' not in api_response or not api_response['choices']:
+            return {
+                'success': False,
+                'error': 'Patch mode response missing choices',
+                'api_response': api_response,
+            }
+
+        content = api_response['choices'][0]['message']['content']
+        content = content.replace(OUTPUT_END_MARKER, '').strip()
+        operations, parse_error = LLMPatchApplier.parse_operations(content)
+        if parse_error and operations == [] and 'no_change' not in content:
+            return {
+                'success': False,
+                'error': f'Patch parse failed: {parse_error}',
+                'api_response': api_response,
+            }
+
+        apply_result = LLMPatchApplier.apply_operations(frontend_code, operations)
+        if not apply_result.get('success'):
+            return {
+                'success': False,
+                'error': f"Patch apply failed: {apply_result.get('error', 'unknown error')}",
+                'api_response': api_response,
+            }
+
+        return {
+            'success': True,
+            'optimized_code': apply_result['content'],
+            'api_response': api_response,
+            'mode': 'patch',
+            'patch_applied': apply_result.get('applied', 0),
+        }
+
+    def _apply_fullfile_fallback_mode(self, prompt: str) -> Dict:
+        messages = self._create_fullfile_messages(prompt)
+        api_response = self.api_client.chat_completion_with_continuation(
+            messages=messages,
+            max_tokens=6000,
+            temperature=0.1,
+            top_p=0.9
+        )
+
+        if not api_response or 'error' in api_response:
+            return {
+                'success': False,
+                'error': api_response.get('error', {}).get('message', 'Unknown API error') if isinstance(api_response, dict) else 'Unknown API error',
+                'api_response': api_response,
+            }
+
+        if 'choices' not in api_response or not api_response['choices']:
+            return {
+                'success': False,
+                'error': 'Fallback response missing choices',
+                'api_response': api_response,
+            }
+
+        optimized_code = api_response['choices'][0]['message']['content'].replace(OUTPUT_END_MARKER, '').strip()
+        if not optimized_code:
+            return {
+                'success': False,
+                'error': 'Fallback response content is empty',
+                'api_response': api_response,
+            }
+
+        return {
+            'success': True,
+            'optimized_code': optimized_code,
+            'api_response': api_response,
+            'mode': 'full_fallback',
+        }
     
     def optimize_single_project(self, project_name: str) -> Dict:
         """优化单个项目"""
@@ -190,11 +382,13 @@ Compare JSX implementation against console logs to identify:
         result = {
             'project_name': project_name,
             'success': False,
+            'optimization_mode': None,
             'original_code': None,
             'optimized_code': None,
             'console_logs': None,
             'error_analysis': None,
             'api_response': None,
+            'patch_applied': 0,
             'errors': [],
             'start_time': datetime.now().isoformat(),
             'end_time': None
@@ -243,34 +437,41 @@ Compare JSX implementation against console logs to identify:
                 project_name, frontend_code, console_logs, error_analysis
             )
             
-            # 4. 创建消息格式
-            messages = self._create_messages(prompt)
-            
-            # 5. 调用GPT-4进行优化
-            print("🤖 调用GPT-4进行代码优化...")
-            api_response = self.api_client.chat_completion(
-                messages=messages,
-                max_tokens=4000,
-                temperature=0.1,
-                top_p=0.9
-            )
-            
-            result['api_response'] = api_response
-            
-            if api_response and 'choices' in api_response and api_response['choices']:
-                optimized_code = api_response['choices'][0]['message']['content']
+            # 4. patch 优先，失败后整文件回退
+            print("🤖 调用GPT进行 patch 优化...")
+            patch_mode_result = self._apply_patch_mode(frontend_code, prompt)
+
+            if patch_mode_result.get('success'):
+                optimized_code = patch_mode_result['optimized_code']
+                result['api_response'] = patch_mode_result['api_response']
                 result['optimized_code'] = optimized_code
                 result['success'] = True
-                
-                print(f"✅ 优化完成，输出长度: {len(optimized_code)} 字符")
-                
-                # 6. 保存优化结果
+                result['optimization_mode'] = patch_mode_result.get('mode')
+                result['patch_applied'] = patch_mode_result.get('patch_applied', 0)
+
+                print(f"✅ patch优化完成，输出长度: {len(optimized_code)} 字符，应用操作数: {result['patch_applied']}")
                 self._save_optimization_result(project_name, result)
-                
             else:
-                error_msg = "API响应格式异常"
-                result['errors'].append(error_msg)
-                print(f"❌ {error_msg}")
+                patch_error = patch_mode_result.get('error', 'unknown patch error')
+                print(f"⚠️ patch优化失败，切换整文件回退: {patch_error}")
+
+                fallback_result = self._apply_fullfile_fallback_mode(prompt)
+                if fallback_result.get('success'):
+                    optimized_code = fallback_result['optimized_code']
+                    result['api_response'] = fallback_result['api_response']
+                    result['optimized_code'] = optimized_code
+                    result['success'] = True
+                    result['optimization_mode'] = fallback_result.get('mode')
+                    result['errors'].append(f"patch_failed_then_fallback: {patch_error}")
+
+                    print(f"✅ 回退优化完成，输出长度: {len(optimized_code)} 字符")
+                    self._save_optimization_result(project_name, result)
+                else:
+                    fallback_error = fallback_result.get('error', 'unknown fallback error')
+                    error_msg = f"patch与回退都失败: patch={patch_error}; fallback={fallback_error}"
+                    result['errors'].append(error_msg)
+                    result['api_response'] = fallback_result.get('api_response') or patch_mode_result.get('api_response')
+                    print(f"❌ {error_msg}")
             
         except Exception as e:
             error_msg = f"优化过程异常: {str(e)}"
