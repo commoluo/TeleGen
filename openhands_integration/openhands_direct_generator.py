@@ -113,10 +113,27 @@ class OpenHandsDirectGenerator:
             shutil.copytree(generated_project, output_path)
         else:
             # OpenHands might put files directly in task_workspace
-            output_path = output_dir / f"project_{project_id}"
-            if output_path.exists():
-                shutil.rmtree(output_path)
-            shutil.copytree(task_workspace, output_path)
+            # Check if task_workspace itself contains backend/frontend
+            if (task_workspace / "backend").exists() and (task_workspace / "frontend").exists():
+                output_path = output_dir / f"project_{project_id}"
+                if output_path.exists():
+                    shutil.rmtree(output_path)
+                shutil.copytree(task_workspace, output_path)
+            else:
+                # Look for project_* subdirectory
+                subdirs = list(task_workspace.glob("project_*"))
+                if subdirs:
+                    src_dir = subdirs[0]
+                    output_path = output_dir / f"project_{project_id}"
+                    if output_path.exists():
+                        shutil.rmtree(output_path)
+                    shutil.copytree(src_dir, output_path)
+                else:
+                    # Fallback: copy entire workspace
+                    output_path = output_dir / f"project_{project_id}"
+                    if output_path.exists():
+                        shutil.rmtree(output_path)
+                    shutil.copytree(task_workspace, output_path)
 
         return {
             "project_id": project_id,
