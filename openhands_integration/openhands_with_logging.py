@@ -3,8 +3,8 @@ OpenHands Generation with Semantic Logging Pipeline
 ================================================
 
 Two-step process:
-1. Generate fullstack code (without logs)
-2. Inject semantic logs (OpenHands analyzes code, adds meaningful logs only)
+1. Generate fullstack code with OpenHands (without logs)
+2. Inject semantic logs using dedicated LLM log injector (fast)
 
 Usage:
     python openhands_with_logging.py --single 000001
@@ -28,6 +28,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 env_path = Path(__file__).parent.parent / "alternative_generation" / ".env"
 if env_path.exists():
     load_dotenv(env_path)
+
+# Import the fast LLM log injector (NOT OpenHands)
+from openhands_integration.llm_log_injector import SemanticLogInjector
 
 # ============================================================================
 # Configuration
@@ -257,152 +260,6 @@ project_{project_id}/
 
 
 # ============================================================================
-# OpenHands Step 2: Inject Semantic Logs (without modifying logic)
-# ============================================================================
-
-class OpenHandsLogInjector:
-    """Use OpenHands to inject semantic logs without modifying business logic"""
-
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = {**OPENHANDS_CONFIG, **(config or {})}
-        self.workspace = Path(self.config.get("workspace_dir", "./openhands_workspace"))
-        self.workspace.mkdir(parents=True, exist_ok=True)
-
-    def inject_logs(self, project_path: str) -> Dict[str, Any]:
-        project_path = Path(project_path)
-        if not project_path.exists():
-            return {"status": "error", "message": "Project not found"}
-
-        task_id = f"loginj_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        task_workspace = self.workspace / task_id
-        task_workspace.mkdir(parents=True, exist_ok=True)
-
-        task = self._build_logging_task(project_path)
-        task_file = task_workspace / "task.txt"
-        task_file.write_text(task)
-
-        work_project = task_workspace / "project"
-        if work_project.exists():
-            shutil.rmtree(work_project)
-        shutil.copytree(project_path, work_project)
-
-        result = self._run_openhands(task_file, task_workspace)
-
-        if (work_project).exists():
-            self._copy_modified_files(work_project, project_path)
-
-        return {
-            "task_id": task_id,
-            "status": "completed" if result["returncode"] == 0 else "failed",
-            "returncode": result["returncode"],
-            "stdout": result.get("stdout", "")[:3000],
-        }
-
-    def _build_logging_task(self, project_path: Path) -> str:
-        backend_files = []
-        frontend_files = []
-
-        backend_dir = project_path / "backend"
-        if backend_dir.exists():
-            for ext in ['*.js']:
-                backend_files.extend([str(f.relative_to(backend_dir)) for f in backend_dir.rglob(ext)])
-
-        frontend_dir = project_path / "frontend"
-        if frontend_dir.exists():
-            for ext in ['*.jsx', '*.js', '*.tsx']:
-                for f in frontend_dir.rglob(ext):
-                    if 'node_modules' not in str(f):
-                        frontend_files.append(str(f.relative_to(frontend_dir)))
-
-        task = """You are adding SEMANTIC logging to an existing codebase.
-
-## CRITICAL RULES:
-1. ONLY add logging statements (console.log with meaningful context)
-2. Do NOT modify any business logic, algorithm, or code structure
-3. Do NOT delete or change existing code
-4. Only add NEW lines with logging
-
-## Project Structure:
-Backend files: %s
-Frontend files: %s
-
-## Logging Guidelines:
-
-### Backend (Express.js):
-- Log at API entry points: "[API] METHOD /path called with params"
-- Log database operations: "[DB] operation on table, result count"
-- Log business logic milestones: "[PROCESS] step description"
-- Log return values (not full objects): "[RESULT] action returned summary"
-
-### Frontend (React):
-- Log component renders: "[RENDER] ComponentName with props"
-- Log API calls: "[API_CALL] endpoint with params"
-- Log state changes: "[STATE] Component.field changed to value"
-- Log user interactions: "[INTERACTION] eventType on element"
-
-## Your Task:
-1. Read each source file
-2. Identify key business logic points
-3. Add ONE console.log at each key point with meaningful context
-4. Keep logs concise but informative
-
-## Important:
-- DO NOT refactor or restructure code
-- DO NOT add comments explaining the logs
-- DO NOT change any existing functionality
-- ONLY add console.log statements
-""" % (', '.join(backend_files[:10]), ', '.join(frontend_files[:10]))
-
-        return task
-
-    def _run_openhands(self, task_file: Path, workspace: Path) -> Dict[str, Any]:
-        cmd = [
-            "openhands",
-            "--headless",
-            "--always-approve",
-            "--override-with-envs",
-            "-f", str(task_file.resolve()),
-        ]
-
-        env = dict(os.environ)
-        if "MINIMAX_API_KEY" in env:
-            env["LLM_API_KEY"] = env["MINIMAX_API_KEY"]
-            minimax_model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
-            env["LLM_MODEL"] = f"openai/{minimax_model}"
-            env["LLM_PROVIDER"] = "openai"
-            env["LLM_BASE_URL"] = "https://api.minimaxi.com/v1"
-        env["TTY_INTERACTIVE"] = "1"
-
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(workspace.resolve()),
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=self.config.get("timeout", 1800),
-            )
-            return {
-                "returncode": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-        except subprocess.TimeoutExpired:
-            return {"returncode": -1, "stdout": "", "stderr": "timeout"}
-        except Exception as e:
-            return {"returncode": -1, "stdout": "", "stderr": str(e)}
-
-    def _copy_modified_files(self, src: Path, dst: Path):
-        for item in src.rglob('*'):
-            if item.is_file() and 'node_modules' not in str(item):
-                rel_path = item.relative_to(src)
-                dst_item = dst / rel_path
-                if dst_item.exists():
-                    if item.read_text() != dst_item.read_text():
-                        dst_item.write_text(item.read_text())
-
-
-# ============================================================================
 # Main Pipeline
 # ============================================================================
 
@@ -417,7 +274,7 @@ def run_pipeline(
     output_path.mkdir(parents=True, exist_ok=True)
 
     generator = OpenHandsCodeGenerator()
-    injector = OpenHandsLogInjector()
+    log_injector = SemanticLogInjector()  # Fast LLM-based injector, NOT OpenHands
 
     results = []
     processed = 0
@@ -463,8 +320,8 @@ def run_pipeline(
 
             print(f"  Generation completed: {result['output_path']}")
 
-        print(f"  Step 2: Injecting semantic logs...")
-        log_result = injector.inject_logs(str(project_dir))
+        print(f"  Step 2: Injecting semantic logs (LLM log injector)...")
+        log_result = log_injector.inject_to_project(str(project_dir))
 
         results.append({
             "project_id": project_id,
@@ -522,7 +379,7 @@ if __name__ == "__main__":
                 entry = json.loads(line.strip())
                 if entry.get('id') == args.single:
                     generator = OpenHandsCodeGenerator()
-                    injector = OpenHandsLogInjector()
+                    log_injector = SemanticLogInjector()  # Fast LLM injector
 
                     print(f"Step 1: Generating project {args.single}...")
                     result = generator.generate_from_instruction(
@@ -535,8 +392,8 @@ if __name__ == "__main__":
                     print(json.dumps(result, indent=2))
 
                     if not args.skip_logging and result["status"] == "completed":
-                        print(f"\nStep 2: Injecting logs into {result['output_path']}...")
-                        log_result = injector.inject_logs(result["output_path"])
+                        print(f"\nStep 2: Injecting logs (LLM log injector)...")
+                        log_result = log_injector.inject_to_project(result["output_path"])
                         print(json.dumps(log_result, indent=2))
                     break
     else:
