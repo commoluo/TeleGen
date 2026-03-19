@@ -263,13 +263,18 @@ project_{project_id}/
 class OpenHandsLogInjector:
     """Use OpenHands to inject semantic logs without modifying business logic"""
 
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = {**OPENHANDS_CONFIG, **(config or {})}
+        self.workspace = Path(self.config.get("workspace_dir", "./openhands_workspace"))
+        self.workspace.mkdir(parents=True, exist_ok=True)
+
     def inject_logs(self, project_path: str) -> Dict[str, Any]:
         project_path = Path(project_path)
         if not project_path.exists():
             return {"status": "error", "message": "Project not found"}
 
         task_id = f"loginj_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        task_workspace = self.config["workspace"] / task_id
+        task_workspace = self.workspace / task_id
         task_workspace.mkdir(parents=True, exist_ok=True)
 
         task = self._build_logging_task(project_path)
