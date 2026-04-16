@@ -34,8 +34,15 @@ webvoyager/data/
 # OpenHands 工作区和验证结果
 openhands_workspace/
 validation_results/
+openhands_generated/
+webvoyager_results/
+webvoyager_task_*.jsonl
+tmp_wv_*.py
+ullSymbols
 
 # 大型数据文件
 *.zip
 *.tar.gz
 *.log
+
+batch_runs/

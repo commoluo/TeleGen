@@ -90,10 +90,11 @@ def create_tasks_test(test_file, ports, tasks_file):
 
 def run_webvoyager(input_dir):
     input_dir = Path(input_dir)                  # Path object for convenience
+    webvoyager_run = Path("webvoyager") / "run.py"
 
     cmd = [
         sys.executable,              # equivalent to "python"
-        "-u", "webvoyager\\run.py",   # keep Windows backslash
+        "-u", str(webvoyager_run),
         "--test_file", str(input_dir / "tasks_test_with_answer.jsonl"),
         "--api_key", "sk-mah6FUel7jrB3lNj8c3cnqUGeKy1ovL5DAD1GFge92C7Fe864c8646B1B9DaB6C20a10A896",
         "--api_model", "/mnt/cache/sharemath/models/Qwen/Qwen2.5-VL-32B-Instruct",
@@ -118,7 +119,7 @@ def main():
     parser.add_argument("--in_dir", type=str)
     args = parser.parse_args()
     in_dir = args.in_dir
-    test_file = "data\\app-bench.jsonl"
+    test_file = str(Path("data") / "app-bench.jsonl")
     app_paths = [os.path.join(in_dir, f"workspace_{idx}") for idx in range(101)]
 
     output_root = in_dir
