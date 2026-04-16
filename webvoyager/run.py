@@ -58,6 +58,9 @@ def setup_logger(folder_path: str):
 def driver_config(args: argparse.Namespace) -> webdriver.ChromeOptions:
     options = webdriver.ChromeOptions()
 
+    # Enable browser console logging for Selenium 4.x
+    options.set_capability('goog:loggingPrefs', {'browser': 'ALL'})
+
     if args.save_accessibility_tree:
         args.force_device_scale = True
 
@@ -662,6 +665,12 @@ def main():
                 or os.getenv("WEBVOYAGER_API_KEY")
                 or os.getenv("OPENAI_API_KEY")
             )
+        elif "api.minimaxi.com" in base_url_lower:
+            args.api_key = (
+                os.getenv("MINIMAX_API_KEY")
+                or os.getenv("WEBVOYAGER_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+            )
         else:
             args.api_key = (
                 os.getenv("WEBVOYAGER_API_KEY")
@@ -669,6 +678,7 @@ def main():
                 or os.getenv("QWEN_API_KEY")
                 or os.getenv("DASHSCOPE_API_KEY")
                 or os.getenv("DEEPSEEK_API_KEY")
+                or os.getenv("MINIMAX_API_KEY")
             )
     if not args.api_key:
         raise RuntimeError("No API key provided! Please set --api_key or .env variable.")

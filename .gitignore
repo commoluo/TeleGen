@@ -39,3 +39,5 @@ validation_results/
 *.zip
 *.tar.gz
 *.log
+
+batch_runs/

@@ -6,6 +6,15 @@ Two-step process:
 1. Generate fullstack code with OpenHands (without logs)
 2. Inject semantic logs using dedicated LLM log injector (fast)
 
+Each execution creates an isolated folder:
+openhands_runs/run_YYYYMMDD_HHMMSS_project_XXXXXX/
+├── task.txt                    # Original task
+├── generation_report.json       # Generation result
+├── project_XXXXXX/            # Generated project
+│   ├── backend/
+│   └── frontend/
+└── log_injection_report.json  # Log injection result
+
 Usage:
     python openhands_with_logging.py --single 000001
 """
@@ -43,7 +52,7 @@ OPENHANDS_CONFIG = {
 
 
 # ============================================================================
-# OpenHands Step 1: Generate Code Without Logs
+# OpenHands Code Generator
 # ============================================================================
 
 class OpenHandsCodeGenerator:
@@ -79,6 +88,7 @@ class OpenHandsCodeGenerator:
         return {
             "project_id": project_id,
             "task_id": task_id,
+            "task_file": str(task_file),
             "status": "completed" if result["returncode"] == 0 else "failed",
             "returncode": result["returncode"],
             "output_path": str(output_path) if output_path else None,
@@ -226,8 +236,10 @@ project_{project_id}/
             return {"returncode": -1, "stdout": "", "stderr": str(e)}
 
     def _find_and_copy_project(self, task_workspace: Path, output_dir: Path, project_id: str) -> Optional[Path]:
+        """Find and copy the generated project to output directory."""
         output_path = output_dir / f"project_{project_id}"
 
+        # Define possible source locations
         possible_sources = [
             task_workspace / "workspace" / f"project_{project_id}",
             task_workspace / "workspace",
@@ -235,28 +247,44 @@ project_{project_id}/
             task_workspace,
         ]
 
+        src_dir = None
         for src in possible_sources:
             if src.exists():
-                backend = src / "backend" if src != task_workspace else None
-                if backend and backend.exists():
-                    if output_path.exists():
-                        shutil.rmtree(output_path)
-                    shutil.copytree(src, output_path)
-                    return output_path
-                elif src != task_workspace:
-                    if (src / "backend").exists():
-                        if output_path.exists():
-                            shutil.rmtree(output_path)
-                        shutil.copytree(src, output_path)
-                        return output_path
+                # Check if this directory has a backend folder
+                if (src / "backend").exists():
+                    src_dir = src
+                    break
+                # For task_workspace, check if it itself has backend
+                if src == task_workspace and (src / "backend").exists():
+                    src_dir = src
+                    break
 
-        if (task_workspace / "backend").exists():
-            if output_path.exists():
-                shutil.rmtree(output_path)
-            shutil.copytree(task_workspace, output_path)
+        if not src_dir:
+            print(f"    WARNING: Could not find project source in {task_workspace}")
+            return None
+
+        # Remove existing output if present
+        if output_path.exists():
+            shutil.rmtree(output_path)
+
+        # Copy the entire directory
+        try:
+            shutil.copytree(src_dir, output_path)
+            print(f"    Copied project from {src_dir.relative_to(task_workspace)}")
+
+            # Verify backend files exist
+            backend_controller = output_path / "backend" / "controllers"
+            if not backend_controller.exists():
+                print(f"    WARNING: controllers folder missing")
+            else:
+                controllers = list(backend_controller.glob("*.js"))
+                print(f"    Found {len(controllers)} controller files")
+
             return output_path
 
-        return None
+        except Exception as e:
+            print(f"    ERROR copying project: {e}")
+            return None
 
 
 # ============================================================================
@@ -265,23 +293,36 @@ project_{project_id}/
 
 def run_pipeline(
     input_file: str = "data/test.jsonl",
-    output_dir: str = "openhands_generated",
+    base_output_dir: str = "openhands_runs",
     start_id: Optional[str] = None,
     end_id: Optional[str] = None,
 ):
+    """
+    Run pipeline with organized output structure.
+
+    Output structure:
+    openhands_runs/
+    └── run_YYYYMMDD_HHMMSS_project_XXXXXX/
+        ├── task.txt                    # Original task sent to OpenHands
+        ├── generation_report.json      # Generation result
+        ├── project_XXXXXX/            # Generated project
+        │   ├── backend/
+        │   └── frontend/
+        └── log_injection_report.json  # Log injection result
+    """
     input_path = Path(input_file)
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    base_output_path = Path(base_output_dir)
+    base_output_path.mkdir(parents=True, exist_ok=True)
 
     generator = OpenHandsCodeGenerator()
-    log_injector = SemanticLogInjector()  # Fast LLM-based injector, NOT OpenHands
+    log_injector = SemanticLogInjector()
 
     results = []
     processed = 0
     failed = 0
 
     print(f"Reading from: {input_path}")
-    print(f"Output directory: {output_path}")
+    print(f"Base output directory: {base_output_path}")
 
     with open(input_path, 'r') as f:
         lines = f.readlines()
@@ -295,36 +336,78 @@ def run_pipeline(
         if end_id and project_id > end_id:
             break
 
+        # Create unique run directory for this execution
+        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{project_id}"
+        run_dir = base_output_path / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+
         print(f"\n{'='*60}")
         print(f"Processing project: {project_id}")
+        print(f"Run directory: {run_dir.name}")
         print(f"{'='*60}")
 
-        project_dir = output_path / f"project_{project_id}"
-        if project_dir.exists():
-            print(f"  Project already exists, skipping generation...")
-        else:
-            print(f"  Step 1: Generating code (without logs)...")
-            result = generator.generate_from_instruction(
-                project_id=project_id,
-                instruction=entry.get('instruction', ''),
-                category=entry.get('Category', {}),
-                ui_instruct=entry.get('ui_instruct', []),
-                output_dir=output_path,
-            )
+        # Step 1: Generate code with OpenHands
+        print(f"  Step 1: Generating code (without logs)...")
 
-            if result["status"] != "completed":
-                print(f"  Generation failed: {result.get('returncode')}")
-                results.append({"project_id": project_id, "status": "failed", "step": "generation"})
-                failed += 1
-                continue
+        result = generator.generate_from_instruction(
+            project_id=project_id,
+            instruction=entry.get('instruction', ''),
+            category=entry.get('Category', {}),
+            ui_instruct=entry.get('ui_instruct', []),
+            output_dir=run_dir,
+        )
 
-            print(f"  Generation completed: {result['output_path']}")
+        # Copy task file to run directory
+        if result.get("task_file"):
+            task_src = Path(result["task_file"])
+            if task_src.exists():
+                shutil.copy(task_src, run_dir / "task.txt")
 
+        # Save generation report
+        gen_report = {
+            "project_id": project_id,
+            "run_id": run_id,
+            "status": result["status"],
+            "returncode": result["returncode"],
+            "output_path": result.get("output_path"),
+            "timestamp": datetime.now().isoformat(),
+        }
+        with open(run_dir / "generation_report.json", 'w') as f:
+            json.dump(gen_report, f, indent=2)
+
+        if result["status"] != "completed":
+            print(f"  Generation failed: {result.get('returncode')}")
+            results.append({
+                "project_id": project_id,
+                "run_id": run_id,
+                "status": "failed",
+                "step": "generation"
+            })
+            failed += 1
+            continue
+
+        print(f"  Generation completed: {result['output_path']}")
+
+        # Step 2: Inject logs using fast LLM injector
+        project_dir = Path(result["output_path"])
         print(f"  Step 2: Injecting semantic logs (LLM log injector)...")
         log_result = log_injector.inject_to_project(str(project_dir))
 
+        # Save log injection report
+        with open(run_dir / "log_injection_report.json", 'w') as f:
+            json.dump({
+                "project_id": project_id,
+                "run_id": run_id,
+                "status": log_result["status"],
+                "files_processed": log_result.get("files_processed", 0),
+                "files_modified": log_result.get("files_modified", 0),
+                "errors": log_result.get("errors", []),
+                "timestamp": datetime.now().isoformat(),
+            }, f, indent=2)
+
         results.append({
             "project_id": project_id,
+            "run_id": run_id,
             "status": "completed" if log_result["status"] == "completed" else "failed",
             "log_status": log_result["status"],
         })
@@ -338,12 +421,13 @@ def run_pipeline(
 
     summary = {
         "timestamp": datetime.now().strftime('%Y%m%d_%H%M%S'),
+        "base_output_dir": str(base_output_path),
         "processed": processed,
         "failed": failed,
         "results": results,
     }
 
-    summary_file = output_path / f"pipeline_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    summary_file = base_output_path / f"pipeline_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(summary_file, 'w') as f:
         json.dump(summary, f, indent=2)
 
@@ -364,7 +448,7 @@ def run_pipeline(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="OpenHands Generation with Semantic Logging")
     parser.add_argument("--input", default="data/test.jsonl", help="Input test.jsonl file")
-    parser.add_argument("--output", default="openhands_generated", help="Output directory")
+    parser.add_argument("--output", default="openhands_runs", help="Base output directory")
     parser.add_argument("--single", help="Process only this specific ID")
     parser.add_argument("--start", help="Start ID (inclusive)")
     parser.add_argument("--end", help="End ID (inclusive)")
@@ -378,28 +462,56 @@ if __name__ == "__main__":
             for line in f:
                 entry = json.loads(line.strip())
                 if entry.get('id') == args.single:
-                    generator = OpenHandsCodeGenerator()
-                    log_injector = SemanticLogInjector()  # Fast LLM injector
+                    project_id = entry.get('id', '')
 
-                    print(f"Step 1: Generating project {args.single}...")
+                    # Create unique run directory
+                    run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{project_id}"
+                    run_dir = Path(args.output) / run_id
+                    run_dir.mkdir(parents=True, exist_ok=True)
+
+                    generator = OpenHandsCodeGenerator()
+                    log_injector = SemanticLogInjector()
+
+                    print(f"Step 1: Generating project {project_id}...")
+                    print(f"Run directory: {run_dir.name}")
+
                     result = generator.generate_from_instruction(
-                        project_id=entry.get('id', ''),
+                        project_id=project_id,
                         instruction=entry.get('instruction', ''),
                         category=entry.get('Category', {}),
                         ui_instruct=entry.get('ui_instruct', []),
-                        output_dir=Path(args.output),
+                        output_dir=run_dir,
                     )
+
+                    # Save task file
+                    if result.get("task_file"):
+                        shutil.copy(result["task_file"], run_dir / "task.txt")
+
+                    # Save generation report
+                    with open(run_dir / "generation_report.json", 'w') as f:
+                        json.dump({
+                            "project_id": project_id,
+                            "run_id": run_id,
+                            "status": result["status"],
+                            "output_path": result.get("output_path"),
+                            "timestamp": datetime.now().isoformat(),
+                        }, f, indent=2)
+
                     print(json.dumps(result, indent=2))
 
                     if not args.skip_logging and result["status"] == "completed":
                         print(f"\nStep 2: Injecting logs (LLM log injector)...")
                         log_result = log_injector.inject_to_project(result["output_path"])
+
+                        with open(run_dir / "log_injection_report.json", 'w') as f:
+                            json.dump(log_result, f, indent=2)
+
                         print(json.dumps(log_result, indent=2))
                     break
     else:
         run_pipeline(
             input_file=args.input,
-            output_dir=args.output,
+            base_output_dir=args.output,
             start_id=args.start,
             end_id=args.end,
         )
