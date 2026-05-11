@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -11,7 +12,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -22,10 +25,104 @@ import urllib.error
 
 from dotenv import load_dotenv
 
+from model_config import to_openhands_model
 from telemetry_sanitizer import render_markdown_report, sanitize_console_logs
+from webvoyager_eval import evaluate_task_dir, load_task_results
 
 
 DEFAULT_MAX_ITERATIONS = 24
+DEFAULT_WEBVOYAGER_WORKERS = 2
+
+
+def _get_webvoyager_worker_count(num_tasks: int) -> int:
+    requested = os.getenv("WEBVOYAGER_NUM_WORKERS", str(DEFAULT_WEBVOYAGER_WORKERS))
+    try:
+        parsed = int(requested)
+    except ValueError:
+        parsed = DEFAULT_WEBVOYAGER_WORKERS
+    return max(1, min(parsed, 4, max(1, num_tasks)))
+
+
+@contextmanager
+def _exclusive_web_stack_lock():
+    """Serialize local app startup and WebVoyager runs across launchers."""
+    lock_path = Path(os.getenv("PIPELINE_WEB_STACK_LOCK", "/tmp/fullstack_web_stack.lock"))
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock_file:
+        print(f"[web-lock] Waiting for Web stack lock: {lock_path}")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        print(f"[web-lock] Acquired Web stack lock: {lock_path}")
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            print(f"[web-lock] Released Web stack lock: {lock_path}")
+
+
+def _guard_backend_process_send_calls(backend_dir: Path) -> List[str]:
+    """Guard common generated backend patterns that break plain node starts."""
+    modified_files: List[str] = []
+    for candidate in sorted(backend_dir.rglob("*.js")):
+        try:
+            original = candidate.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        updated_lines: List[str] = []
+        changed = False
+        for line in original.splitlines(keepends=True):
+            if "process.send(" not in line or "typeof process.send" in line:
+                updated_lines.append(line)
+                continue
+
+            newline = "\n" if line.endswith("\n") else ""
+            stripped = line.rstrip("\n")
+            indent = stripped[: len(stripped) - len(stripped.lstrip())]
+            body = stripped.strip()
+            updated_lines.append(f'{indent}if (typeof process.send === "function") {body}{newline}')
+            changed = True
+
+        updated = "".join(updated_lines)
+        normalized = re.sub(
+            r"assert\s*\{\s*type\s*:\s*(['\"])json\1\s*\}",
+            'with { type: "json" }',
+            updated,
+        )
+        if normalized != updated:
+            changed = True
+            updated = normalized
+
+        if changed:
+            candidate.write_text(updated, encoding="utf-8")
+            modified_files.append(str(candidate))
+
+        _materialize_missing_local_data_modules(candidate)
+
+    return modified_files
+
+
+def _materialize_missing_local_data_modules(source_file: Path) -> None:
+    try:
+        content = source_file.read_text(encoding="utf-8")
+    except Exception:
+        return
+
+    pattern = re.compile(r"import\s+\{([^}]+)\}\s+from\s+['\"](\.{1,2}/[^'\"]+data[^'\"]*\.js)['\"]")
+    for match in pattern.finditer(content):
+        imported_names = [item.strip() for item in match.group(1).split(",") if item.strip()]
+        target_path = (source_file.parent / match.group(2)).resolve()
+        if target_path.exists():
+            continue
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        exports: List[str] = []
+        for name in imported_names:
+            local_name = name.split(" as ", 1)[0].strip()
+            if local_name.endswith("s"):
+                exports.append(f"export const {local_name} = [];\n")
+            else:
+                exports.append(f"export const {local_name} = {{}};\n")
+        target_path.write_text("".join(exports), encoding="utf-8")
 
 
 def _load_runtime_env(workspace_root: Path) -> None:
@@ -39,31 +136,44 @@ def _build_openhands_llm_env(env: Dict[str, str]) -> Dict[str, str]:
     out = dict(env)
 
     if out.get("LLM_API_KEY") and out.get("LLM_MODEL"):
+        out.setdefault("LLM_EXTRA_BODY", '{"enable_thinking": false}')
         return out
 
     # Priority 1: dedicated OpenHands vars already present.
     if out.get("LLM_API_KEY") and not out.get("LLM_MODEL"):
-        out["LLM_MODEL"] = out.get("MINIMAX_MODEL") or out.get("WEBVOYAGER_MODEL") or "openai/gpt-4o"
+        out["LLM_MODEL"] = to_openhands_model(out.get("PIPELINE_MODEL") or out.get("QWEN_MODEL", "qwen3.5-plus"))
         out.setdefault("LLM_PROVIDER", "openai")
-        out.setdefault("LLM_BASE_URL", "https://api.openai.com/v1")
+        out.setdefault("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        out.setdefault("LLM_EXTRA_BODY", '{"enable_thinking": false}')
         return out
 
-    # Priority 2: WebVoyager/Minimax credentials used in this repo.
-    minimax_key = out.get("WEBVOYAGER_API_KEY") or out.get("MINIMAX_API_KEY")
-    minimax_model = out.get("WEBVOYAGER_MODEL") or out.get("MINIMAX_MODEL") or "MiniMax-M2.7-highspeed"
-    if minimax_key:
-        out["LLM_API_KEY"] = minimax_key
-        out["LLM_MODEL"] = f"openai/{minimax_model}"
+    # Priority 2: Qwen credentials (preferred for this project).
+    qwen_key = out.get("QWEN_API_KEY")
+    if qwen_key:
+        out["LLM_API_KEY"] = qwen_key
+        out["LLM_MODEL"] = to_openhands_model(out.get("PIPELINE_MODEL") or out.get("QWEN_MODEL", "qwen3.5-plus"))
         out["LLM_PROVIDER"] = "openai"
-        out["LLM_BASE_URL"] = out.get("WEBVOYAGER_BASE_URL") or "https://api.minimaxi.com/v1"
+        out["LLM_BASE_URL"] = out.get("QWEN_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
         return out
 
-    # Priority 3: DeepSeek credentials.
+    # Priority 3: WebVoyager credentials.
+    wv_key = out.get("WEBVOYAGER_API_KEY")
+    if wv_key:
+        out["LLM_API_KEY"] = wv_key
+        out["LLM_MODEL"] = to_openhands_model(out.get("PIPELINE_MODEL") or out.get("QWEN_MODEL", "qwen3.5-plus"))
+        out["LLM_PROVIDER"] = "openai"
+        out["LLM_BASE_URL"] = out.get("WEBVOYAGER_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
+        return out
+
+    # Priority 4: DeepSeek credentials.
     if out.get("DEEPSEEK_API_KEY"):
         out["LLM_API_KEY"] = out["DEEPSEEK_API_KEY"]
         out["LLM_MODEL"] = out.get("LLM_MODEL") or "deepseek/deepseek-chat"
         out["LLM_PROVIDER"] = "deepseek"
         out["LLM_BASE_URL"] = out.get("DEEPSEEK_API_BASE_URL") or "https://api.deepseek.com"
+        out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
         return out
 
     # Priority 4: OpenAI key fallback.
@@ -72,6 +182,7 @@ def _build_openhands_llm_env(env: Dict[str, str]) -> Dict[str, str]:
         out["LLM_MODEL"] = out.get("LLM_MODEL") or "openai/gpt-4o"
         out["LLM_PROVIDER"] = "openai"
         out["LLM_BASE_URL"] = out.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
 
     return out
 
@@ -87,6 +198,17 @@ class PipelinePaths:
 
     def __post_init__(self):
         self.webvoyager_v2_results = self.experiment_workspace / "webvoyager_v2_results"
+
+
+def derive_experiment_workspace(source_workspace: Path) -> Path:
+    source_name = source_workspace.name
+    if source_name.endswith("_AST"):
+        experiment_name = source_name[:-4] + "_v2_AST"
+    elif source_name.endswith("_LLM"):
+        experiment_name = source_name[:-4] + "_v2_LLM"
+    else:
+        experiment_name = f"{source_name}_v2_experiment"
+    return source_workspace.parent / experiment_name
 
 
 def _run(cmd, cwd: Path, env: Optional[Dict[str, str]] = None, timeout: Optional[int] = None):
@@ -120,6 +242,62 @@ def _run(cmd, cwd: Path, env: Optional[Dict[str, str]] = None, timeout: Optional
         returncode=returncode,
         stdout=stdout_b.decode(errors="replace") if isinstance(stdout_b, bytes) else (stdout_b or ""),
         stderr=stderr_b.decode(errors="replace") if isinstance(stderr_b, bytes) else (stderr_b or ""),
+    )
+
+
+def _run_stream(cmd, cwd: Path, env: Optional[Dict[str, str]] = None, timeout: Optional[int] = None, prefix: str = ""):
+    """Run a subprocess with real-time streaming to stdout while also capturing output."""
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        preexec_fn=os.setsid,
+    )
+
+    stdout_chunks: List[str] = []
+    stderr_chunks: List[str] = []
+
+    def _reader(pipe, chunks, tag):
+        for line_b in iter(pipe.readline, b""):
+            line = line_b.decode(errors="replace")
+            chunks.append(line)
+            sys.stdout.write(f"{prefix}{tag}{line}")
+            sys.stdout.flush()
+        pipe.close()
+
+    t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks, ""), daemon=True)
+    t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks, "[stderr] "), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    t_out.join(timeout=5)
+    t_err.join(timeout=5)
+
+    returncode = proc.returncode if proc.returncode is not None else -9
+    if timed_out and returncode == 0:
+        returncode = -9
+
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=returncode,
+        stdout="".join(stdout_chunks),
+        stderr="".join(stderr_chunks),
     )
 
 
@@ -272,9 +450,9 @@ def _collect_openhands_session_metrics(stdout_text: str) -> Dict[str, Optional[o
 def phase1_build_telemetry_brief(
     paths: PipelinePaths,
     model: Optional[str] = None,
-    max_chars: int = 180000,
-    max_tokens: int = 3500,
-    max_rounds: int = 6,
+    max_chars: int = 40000,
+    max_tokens: int = 1500,
+    max_rounds: int = 2,
     retries_per_model: int = 3,
     retry_backoff_seconds: float = 2.0,
 ) -> Dict[str, str]:
@@ -289,11 +467,11 @@ def phase1_build_telemetry_brief(
     else:
         model_candidates.extend(
             [
+                os.getenv("PIPELINE_MODEL", ""),
+                os.getenv("QWEN_MODEL", ""),
                 os.getenv("WEBVOYAGER_MODEL", ""),
-                os.getenv("MINIMAX_MODEL", ""),
                 os.getenv("DEFAULT_MODEL", ""),
-                "MiniMax-M2.7-highspeed",
-                "openai/MiniMax-M2.7-highspeed",
+                "qwen3.5-plus",
             ]
         )
     model_candidates = [m for m in model_candidates if m]
@@ -327,7 +505,7 @@ def phase1_build_telemetry_brief(
                 chosen_model,
             ]
 
-            result = _run(cmd, cwd=Path(__file__).parent.parent, timeout=1800)
+            result = _run_stream(cmd, cwd=Path(__file__).parent.parent, timeout=1800, prefix="")
             last_result = result
 
             log_chunks.append(
@@ -431,6 +609,119 @@ def _wait_for_server(url: str, timeout: int = 60) -> bool:
     return False
 
 
+def _port_listener_pids(port: int) -> set[int]:
+    try:
+        result = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=5)
+    except Exception:
+        return set()
+    pids: set[int] = set()
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pids.add(int(line))
+        except ValueError:
+            continue
+    return pids
+
+
+def _process_family_pids(root_pid: int) -> set[int]:
+    family: set[int] = set()
+    queue = [int(root_pid)]
+
+    while queue:
+        current = queue.pop(0)
+        if current in family:
+            continue
+        family.add(current)
+        try:
+            result = subprocess.run(["pgrep", "-P", str(current)], capture_output=True, text=True, timeout=5)
+        except Exception:
+            continue
+        for line in (result.stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                child_pid = int(line)
+            except ValueError:
+                continue
+            if child_pid not in family:
+                queue.append(child_pid)
+
+    return family
+
+
+def _wait_for_backend_port_owner(process: subprocess.Popen, port: int, timeout: int = 60) -> bool:
+    start = time.time()
+    while time.time() - start < timeout:
+        if process.poll() is not None:
+            return False
+        listener_pids = _port_listener_pids(port)
+        if listener_pids:
+            family_pids = _process_family_pids(process.pid)
+            if listener_pids & family_pids:
+                time.sleep(1)
+                if process.poll() is None:
+                    refreshed_listener_pids = _port_listener_pids(port)
+                    refreshed_family_pids = _process_family_pids(process.pid)
+                    if refreshed_listener_pids & refreshed_family_pids:
+                        return True
+                return False
+        time.sleep(1)
+    return False
+
+
+def _find_free_port(start_port: int = 3000, max_tries: int = 200) -> int:
+    for port in range(start_port, start_port + max_tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"Unable to find free port starting from {start_port}")
+
+
+def _detect_backend_runtime_port(backend_dir: Path, default_port: int = 5001) -> int:
+    """Infer a backend's hardcoded listen port when it does not honor PORT env."""
+    candidate_files = [
+        backend_dir / "server.js",
+        backend_dir / "server.mjs",
+        backend_dir / "app.js",
+        backend_dir / "index.js",
+        backend_dir / "main.js",
+        backend_dir / "server.py",
+        backend_dir / "app.py",
+        backend_dir / "main.py",
+    ]
+    patterns = [
+        re.compile(r"\b(?:const|let|var)\s+PORT\s*=\s*(\d{4,5})\b"),
+        re.compile(r"\bPORT\s*=\s*(\d{4,5})\b"),
+        re.compile(r"\.listen\(\s*(\d{4,5})\s*[,)]"),
+        re.compile(r"uvicorn\.run\([^\n]*port\s*=\s*(\d{4,5})"),
+    ]
+
+    for path in candidate_files:
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for pattern in patterns:
+            match = pattern.search(content)
+            if match:
+                try:
+                    return int(match.group(1))
+                except (TypeError, ValueError):
+                    continue
+
+    return default_port
+
+
 def _create_webvoyager_task_file(project_id: str, port: int = 3000) -> tuple:
     """Create WebVoyager task file for a project. Returns (task_file, num_tasks)."""
     data_dir = Path(__file__).parent.parent / "data"
@@ -446,7 +737,7 @@ def _create_webvoyager_task_file(project_id: str, port: int = 3000) -> tuple:
                         "web_name": f"Generated_Project_{project_id}_v2",
                         "id": f"{project_id}--{idx + 1}",
                         "ques": item.get("task", ""),
-                        "web": f"http://localhost:{port}",
+                        "web": f"http://127.0.0.1:{port}",
                         "expected_result": item.get("expected_result", ""),
                     }
                     tasks.append(task)
@@ -525,62 +816,8 @@ def _load_test_specs(test_jsonl: Path, project_id: str) -> Optional[Dict]:
 
 
 def _load_v1_task_results(webvoyager_results: Path) -> List[Dict[str, str]]:
-    """Extract per-task verdicts from v1 WebVoyager interact_messages.json files.
-
-    Returns a list of dicts with keys: task_name, verdict, observation.
-    verdict is 'YES', 'NO', or 'UNKNOWN'. observation is the agent's ANSWER text.
-    """
-    results: List[Dict[str, str]] = []
-    if not webvoyager_results.exists():
-        return results
-    try:
-        task_dirs = sorted(
-            [d for d in webvoyager_results.iterdir() if d.is_dir() and d.name.startswith("task")],
-            key=lambda d: d.name,
-        )
-    except Exception:
-        return results
-
-    for task_dir in task_dirs:
-        log_file = task_dir / "interact_messages.json"
-        entry: Dict[str, str] = {"task_name": task_dir.name, "verdict": "UNKNOWN", "observation": ""}
-        if log_file.exists():
-            try:
-                msgs = json.loads(log_file.read_text(encoding="utf-8"))
-                if isinstance(msgs, list):
-                    # Walk messages in reverse to find the last assistant message with ANSWER
-                    for m in reversed(msgs):
-                        if not isinstance(m, dict) or m.get("role") != "assistant":
-                            continue
-                        content = m.get("content", "")
-                        if "ANSWER;" not in content:
-                            continue
-                        # Extract everything after "ANSWER;"
-                        idx = content.find("ANSWER;")
-                        answer_text = content[idx + 7:].strip()
-                        # Detect YES/NO verdict: first token or explicit YES/NO
-                        first_token = answer_text.split()[0].strip(".,;:").upper() if answer_text else ""
-                        if first_token == "YES":
-                            entry["verdict"] = "YES"
-                        elif first_token == "NO":
-                            entry["verdict"] = "NO"
-                        else:
-                            # Check for YES/NO anywhere near the start
-                            snippet = answer_text[:80].upper()
-                            if re.search(r"\bYES\b", snippet):
-                                entry["verdict"] = "YES"
-                            elif re.search(r"\bNO\b", snippet):
-                                entry["verdict"] = "NO"
-                            else:
-                                # Agent gave a descriptive answer without explicit YES/NO —
-                                # treat as passed (agent wouldn't describe success if it failed)
-                                entry["verdict"] = "YES"
-                        entry["observation"] = answer_text[:500]
-                        break
-            except Exception:
-                pass
-        results.append(entry)
-    return results
+    """Load per-task verdicts using the shared WebVoyager-style evaluator."""
+    return load_task_results(webvoyager_results)
 
 
 def _build_phase2_task(
@@ -706,7 +943,7 @@ def phase2_openhands_repair(
     env["MAX_ITERATIONS"] = str(max_iterations)
     env["TTY_INTERACTIVE"] = "1"
 
-    result = _run(cmd, cwd=paths.experiment_workspace, env=env, timeout=timeout_seconds)
+    result = _run_stream(cmd, cwd=paths.experiment_workspace, env=env, timeout=timeout_seconds, prefix="[openhands] ")
 
     stdout_file = paths.experiment_workspace / "openhands_repair_stdout.log"
     stderr_file = paths.experiment_workspace / "openhands_repair_stderr.log"
@@ -715,7 +952,18 @@ def phase2_openhands_repair(
 
     metrics = _collect_openhands_session_metrics(result.stdout or "")
 
-    status = "success" if result.returncode == 0 else "failed"
+    llm_calls = metrics.get("llm_call_count", 0) or 0
+    if result.returncode != 0:
+        status = "failed"
+    elif llm_calls == 0:
+        # OpenHands exited cleanly but made no LLM calls — likely an auth error
+        stdout_text = result.stdout or ""
+        if "AuthenticationError" in stdout_text or "login fail" in stdout_text:
+            status = "auth_error"
+        else:
+            status = "no_llm_calls"
+    else:
+        status = "success"
     payload = {
         "status": status,
         "returncode": str(result.returncode),
@@ -744,6 +992,7 @@ def phase3_webvoyager_test(
 ) -> Dict[str, str]:
     """Run WebVoyager testing on the repaired code in experiment_workspace."""
     experiment_dir = paths.experiment_workspace
+    _safe_remove(paths.webvoyager_v2_results)
     paths.webvoyager_v2_results.mkdir(parents=True, exist_ok=True)
 
     result = {
@@ -754,6 +1003,8 @@ def phase3_webvoyager_test(
 
     backend_process = None
     frontend_process = None
+    backend_port = 5001
+    frontend_port = port
     web_port = port
 
     try:
@@ -765,185 +1016,200 @@ def phase3_webvoyager_test(
             result["message"] = "No backend or frontend directory found"
             return result
 
-        _kill_port(5001)
-        _kill_port(port)
-        _kill_port(port + 1)
+        with _exclusive_web_stack_lock():
+            if has_backend:
+                backend_port = _detect_backend_runtime_port(experiment_dir / "backend", default_port=5001)
+            _kill_port(5001)
+            if backend_port != 5001:
+                _kill_port(backend_port)
+            _kill_port(port)
+            _kill_port(port + 1)
 
-        if has_backend:
-            backend_dir = experiment_dir / "backend"
-            if not (backend_dir / "node_modules").exists():
-                install_result = _run(
-                    ["npm", "install"],
+            if has_backend:
+                backend_dir = experiment_dir / "backend"
+                guarded_files = _guard_backend_process_send_calls(backend_dir)
+                if guarded_files:
+                    print(f"[web-lock] Guarded unsafe process.send calls in {len(guarded_files)} backend file(s)")
+                if not (backend_dir / "node_modules").exists():
+                    install_result = _run(
+                        ["npm", "install"],
+                        cwd=backend_dir,
+                        timeout=300,
+                    )
+                    if install_result.returncode != 0:
+                        result["status"] = "backend_npm_install_failed"
+                        result["message"] = f"npm install failed: {(install_result.stderr or '')[:500]}"
+                        return result
+
+                # Prefer the backend's declared port when it is hardcoded.
+                _backend_port = backend_port if has_frontend else backend_port
+
+                if (backend_dir / "server.py").exists():
+                    cmd = [sys.executable, "server.py"]
+                elif (backend_dir / "server.js").exists():
+                    cmd = ["node", "server.js"]
+                else:
+                    cmd = ["npm", "start"]
+
+                env = dict(os.environ)
+                env["PORT"] = str(_backend_port)
+                env["HOST"] = "0.0.0.0"
+
+                backend_process = subprocess.Popen(
+                    cmd,
                     cwd=backend_dir,
-                    timeout=300,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
-                if install_result.returncode != 0:
-                    result["status"] = "backend_npm_install_failed"
-                    result["message"] = f"npm install failed: {(install_result.stderr or '')[:500]}"
+
+                if not _wait_for_backend_port_owner(backend_process, _backend_port, timeout=60):
+                    result["status"] = "backend_not_accessible"
+                    result["message"] = (
+                        f"Backend did not bind port {_backend_port} as the spawned process family; "
+                        f"listeners={sorted(_port_listener_pids(_backend_port))}"
+                    )
                     return result
 
-            # Most generated fullstack projects expose frontend at 3000 and backend at 5001.
-            _backend_port = 5001 if has_frontend else port
+            if has_frontend:
+                frontend_dir = experiment_dir / "frontend"
+                if not (frontend_dir / "node_modules").exists():
+                    install_result = _run(
+                        ["npm", "install"],
+                        cwd=frontend_dir,
+                        timeout=300,
+                    )
+                    if install_result.returncode != 0:
+                        result["status"] = "frontend_npm_install_failed"
+                        result["message"] = f"npm install failed: {(install_result.stderr or '')[:500]}"
+                        return result
 
-            if (backend_dir / "server.py").exists():
-                cmd = [sys.executable, "server.py"]
-            elif (backend_dir / "server.js").exists():
-                cmd = ["node", "server.js"]
-            else:
-                cmd = ["npm", "start"]
+                frontend_ready = False
+                frontend_probe_attempts = [(60, False), (90, True)]
+                for attempt_index, (probe_timeout, rotate_port) in enumerate(frontend_probe_attempts, start=1):
+                    if rotate_port:
+                        _kill_port(frontend_port)
+                        frontend_port = _find_free_port(frontend_port + 1)
+                    else:
+                        frontend_port = _find_free_port(port)
 
-            env = dict(os.environ)
-            env["PORT"] = str(_backend_port)
-            env["HOST"] = "0.0.0.0"
+                    cmd = ["npm", "run", "dev", "--", "--port", str(frontend_port), "--host", "0.0.0.0", "--strictPort"] if (frontend_dir / "vite.config.js").exists() else ["npm", "start"]
+                    if cmd[0] == "npm" and "dev" not in cmd:
+                        cmd = ["npm", "run", "dev", "--", "--port", str(frontend_port), "--host", "0.0.0.0", "--strictPort"]
 
-            backend_process = subprocess.Popen(
-                cmd,
-                cwd=backend_dir,
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+                    frontend_env = dict(os.environ)
+                    frontend_env["PORT"] = str(frontend_port)
+                    frontend_env["HOST"] = "0.0.0.0"
+                    frontend_process = subprocess.Popen(
+                        cmd,
+                        cwd=frontend_dir,
+                        env=frontend_env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
 
-            if not _wait_for_server(f"http://localhost:{_backend_port}", timeout=60):
-                result["status"] = "backend_not_accessible"
-                result["message"] = f"Backend did not become accessible at port {_backend_port}"
-                return result
+                    if _wait_for_server(f"http://127.0.0.1:{frontend_port}", timeout=probe_timeout):
+                        frontend_ready = True
+                        break
 
-        if has_frontend:
-            frontend_dir = experiment_dir / "frontend"
-            if not (frontend_dir / "node_modules").exists():
-                install_result = _run(
-                    ["npm", "install"],
-                    cwd=frontend_dir,
-                    timeout=300,
-                )
-                if install_result.returncode != 0:
-                    result["status"] = "frontend_npm_install_failed"
-                    result["message"] = f"npm install failed: {(install_result.stderr or '')[:500]}"
-                    return result
-
-            cmd = ["npm", "run", "dev", "--", "--port", str(port)] if (frontend_dir / "vite.config.js").exists() else ["npm", "start"]
-            if cmd[0] == "npm" and "dev" not in cmd:
-                cmd = ["npm", "run", "dev", "--", "--port", str(port)]
-
-            frontend_process = subprocess.Popen(
-                cmd,
-                cwd=frontend_dir,
-                env=dict(os.environ),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-
-            frontend_port = port
-            if not _wait_for_server(f"http://localhost:{frontend_port}", timeout=60):
-                result["status"] = "frontend_not_accessible"
-                result["message"] = f"Frontend did not become accessible at port {frontend_port}"
-                return result
-
-            web_port = frontend_port
-        else:
-            web_port = 5001 if has_backend else port
-
-        task_file, num_tasks = _create_webvoyager_task_file(project_id, port=web_port)
-        if task_file is None or num_tasks == 0:
-            result["status"] = "no_tasks"
-            result["message"] = f"No WebVoyager tasks found for project {project_id}"
-            return result
-
-        webvoyager_output = paths.webvoyager_v2_results
-
-        api_model = os.getenv("WEBVOYAGER_MODEL", "MiniMax-M2.7-highspeed")
-        api_base = os.getenv("WEBVOYAGER_BASE_URL", "https://api.minimaxi.com/v1")
-        api_key = os.getenv("MINIMAX_API_KEY") or os.getenv("WEBVOYAGER_API_KEY")
-        if not api_key:
-            result["status"] = "api_key_missing"
-            result["message"] = "MINIMAX_API_KEY is not set"
-            return result
-
-        cmd = [
-            sys.executable,
-            "run.py",
-            "--test_file",
-            str(task_file),
-            "--api_key",
-            api_key,
-            "--api_model",
-            api_model,
-            "--api_base_url",
-            api_base,
-            "--output_dir",
-            str(webvoyager_output),
-            "--headless",
-            "--num_workers",
-            "1",
-            "--max_iter",
-            str(max_iter),
-        ]
-
-        base_dir = Path(__file__).parent.parent / "webvoyager"
-        wv_result = _run(
-            cmd,
-            cwd=base_dir,
-            timeout=timeout_seconds,
-        )
-
-        (experiment_dir / "webvoyager_v2_stdout.log").write_text(wv_result.stdout or "", encoding="utf-8")
-        (experiment_dir / "webvoyager_v2_stderr.log").write_text(wv_result.stderr or "", encoding="utf-8")
-
-        success_count = 0
-        failed_count = 0
-        if webvoyager_output.exists():
-            task_dirs = [d for d in webvoyager_output.iterdir() if d.is_dir() and d.name.startswith("task")]
-            for task_dir in task_dirs:
-                log_file = task_dir / "interact_messages.json"
-                if log_file.exists():
+                    print(
+                        f"[web-lock] Frontend probe attempt {attempt_index}/{len(frontend_probe_attempts)} failed on port {frontend_port} "
+                        f"after {probe_timeout}s"
+                    )
                     try:
-                        msgs = json.loads(log_file.read_text(encoding="utf-8"))
-                        verdict = "UNKNOWN"
-                        if isinstance(msgs, list):
-                            for m in reversed(msgs):
-                                if not isinstance(m, dict) or m.get("role") != "assistant":
-                                    continue
-                                content = m.get("content", "")
-                                # Strip <think> blocks
-                                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-                                if "ANSWER;" not in content:
-                                    continue
-                                answer_text = content[content.find("ANSWER;") + 7:].strip()
-                                first_token = answer_text.split()[0].strip(".,;:").upper() if answer_text else ""
-                                if first_token == "YES":
-                                    verdict = "YES"
-                                elif first_token == "NO":
-                                    verdict = "NO"
-                                else:
-                                    snippet = answer_text[:80].upper()
-                                    if re.search(r"\bYES\b", snippet):
-                                        verdict = "YES"
-                                    elif re.search(r"\bNO\b", snippet):
-                                        verdict = "NO"
-                                    else:
-                                        verdict = "YES"  # descriptive → passed
-                                break
-                        if verdict == "YES":
+                        frontend_process.terminate()
+                        frontend_process.wait(timeout=10)
+                    except Exception:
+                        frontend_process.kill()
+                    frontend_process = None
+
+                if not frontend_ready:
+                    result["status"] = "frontend_not_accessible"
+                    result["message"] = (
+                        f"Frontend did not become accessible after {len(frontend_probe_attempts)} attempts; "
+                        f"last port={frontend_port}"
+                    )
+                    return result
+
+                web_port = frontend_port
+            else:
+                web_port = backend_port if has_backend else port
+
+            task_file, num_tasks = _create_webvoyager_task_file(project_id, port=web_port)
+            if task_file is None or num_tasks == 0:
+                result["status"] = "no_tasks"
+                result["message"] = f"No WebVoyager tasks found for project {project_id}"
+                return result
+
+            webvoyager_output = paths.webvoyager_v2_results
+            webvoyager_workers = _get_webvoyager_worker_count(num_tasks)
+
+            api_model = os.getenv("WEBVOYAGER_MODEL", "qwen-vl-max")
+            api_base = os.getenv("WEBVOYAGER_API_BASE_URL") or os.getenv("QWEN_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            api_key = os.getenv("WEBVOYAGER_API_KEY") or os.getenv("QWEN_API_KEY")
+            if not api_key:
+                result["status"] = "api_key_missing"
+                result["message"] = "WEBVOYAGER_API_KEY or QWEN_API_KEY is not set"
+                return result
+
+            cmd = [
+                sys.executable,
+                "run.py",
+                "--test_file",
+                str(task_file),
+                "--api_key",
+                api_key,
+                "--api_model",
+                api_model,
+                "--api_base_url",
+                api_base,
+                "--output_dir",
+                str(webvoyager_output),
+                "--headless",
+                "--num_workers",
+                str(webvoyager_workers),
+                "--max_iter",
+                str(max_iter),
+            ]
+
+            base_dir = Path(__file__).parent.parent / "webvoyager"
+            wv_result = _run_stream(
+                cmd,
+                cwd=base_dir,
+                timeout=timeout_seconds,
+                prefix="[webvoyager] ",
+            )
+
+            (experiment_dir / "webvoyager_v2_stdout.log").write_text(wv_result.stdout or "", encoding="utf-8")
+            (experiment_dir / "webvoyager_v2_stderr.log").write_text(wv_result.stderr or "", encoding="utf-8")
+
+            success_count = 0
+            failed_count = 0
+            if webvoyager_output.exists():
+                task_dirs = [d for d in webvoyager_output.iterdir() if d.is_dir() and d.name.startswith("task")]
+                for task_dir in task_dirs:
+                    try:
+                        verdict = evaluate_task_dir(task_dir)
+                        if verdict.get("status") == "SUCCESS":
                             success_count += 1
                         else:
                             failed_count += 1
-                    except Exception:
-                        failed_count += 1
-                else:
-                    failed_count += 1
+                    except Exception as exc:
+                        result["status"] = "evaluation_failed"
+                        result["message"] = f"WebVoyager auto evaluation failed for {task_dir.name}: {exc}"
+                        return result
 
-        if wv_result.returncode == 0 or success_count > 0:
-            result["status"] = "success" if failed_count == 0 else "partial_success"
-            result["message"] = f"{success_count} succeeded, {failed_count} failed"
-        else:
-            result["status"] = "failed"
-            result["message"] = f"WebVoyager process failed (returncode={wv_result.returncode})"
+            if wv_result.returncode == 0 or success_count > 0:
+                result["status"] = "success" if failed_count == 0 else "partial_success"
+                result["message"] = f"{success_count} succeeded, {failed_count} failed"
+            else:
+                result["status"] = "failed"
+                result["message"] = f"WebVoyager process failed (returncode={wv_result.returncode})"
 
-        result["success_count"] = success_count
-        result["failed_count"] = failed_count
-        result["returncode"] = str(wv_result.returncode)
-        result["max_iter"] = str(max_iter)
+            result["success_count"] = success_count
+            result["failed_count"] = failed_count
+            result["returncode"] = str(wv_result.returncode)
+            result["max_iter"] = str(max_iter)
 
     finally:
         if backend_process:
@@ -958,13 +1224,14 @@ def phase3_webvoyager_test(
                 frontend_process.wait(timeout=10)
             except Exception:
                 frontend_process.kill()
+        _kill_port(frontend_port)
         _kill_port(port)
 
     return result
 
 
 def build_paths(source_workspace: Path, webvoyager_results: Path) -> PipelinePaths:
-    experiment_workspace = source_workspace.parent / f"{source_workspace.name}_v2_experiment"
+    experiment_workspace = derive_experiment_workspace(source_workspace)
     telemetry_report = experiment_workspace / "telemetry_report.md"
     openhands_task_file = experiment_workspace / "openhands_repair_task.txt"
     return PipelinePaths(

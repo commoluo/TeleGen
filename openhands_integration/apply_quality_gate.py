@@ -15,56 +15,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-
-def _extract_verdict(msgs: list) -> str:
-    """Extract YES/NO/UNKNOWN verdict from interact_messages list.
-    Exactly matches _count_v1_passes logic in optimize_batch_results.py.
-    """
-    for m in reversed(msgs):
-        if not isinstance(m, dict) or m.get("role") != "assistant":
-            continue
-        content = re.sub(r"<think>.*?</think>", "", m.get("content", ""), flags=re.DOTALL)
-        if "ANSWER;" not in content:
-            continue
-        answer_text = content[content.find("ANSWER;") + 7:].strip()
-        first = answer_text.split()[0].strip(".,;:").upper() if answer_text.split() else ""
-        if first == "YES":
-            return "YES"
-        if first == "NO":
-            return "NO"
-        snippet = answer_text[:120].upper()
-        if re.search(r"\bYES\b", snippet):
-            return "YES"
-        if re.search(r"\bNO\b", snippet):
-            return "NO"
-        return "YES"  # ANSWER; found but ambiguous → default YES
-    return "UNKNOWN"
+from webvoyager_eval import count_successes
 
 
 def count_passes(wv_dir: Path) -> int:
-    """Count passing tasks in a webvoyager results directory."""
-    if not wv_dir.exists():
-        return 0
-    passes = 0
-    for task_dir in sorted(wv_dir.iterdir()):
-        if not task_dir.is_dir():
-            continue
-        msg_file = task_dir / "interact_messages.json"
-        if not msg_file.exists():
-            continue
-        try:
-            msgs = json.loads(msg_file.read_text(encoding="utf-8"))
-            if _extract_verdict(msgs) == "YES":
-                passes += 1
-        except Exception as e:
-            print(f"  Warning: could not parse {msg_file}: {e}")
-    return passes
+    """Count passing tasks using the WebVoyager-style auto evaluator."""
+    return count_successes(wv_dir)
 
 
 def rollback_to_v1(source_workspace: Path, experiment_workspace: Path) -> None:

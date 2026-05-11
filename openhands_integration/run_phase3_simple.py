@@ -124,10 +124,10 @@ def main():
             wv_output = v2_dir / "webvoyager_v2_results"
             wv_output.mkdir(exist_ok=True)
 
-            api_model = "MiniMax-M2.7-highspeed"
-            api_base = "https://api.minimaxi.com/v1"
+            api_model = os.getenv("WEBVOYAGER_MODEL", "qwen3.5-plus")
+            api_base = os.getenv("WEBVOYAGER_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
             api_key = subprocess.run(
-                ["python3", "-c", "from dotenv import load_dotenv; load_dotenv(); print(__import__('os').getenv('MINIMAX_API_KEY', ''))"],
+                ["python3", "-c", "from dotenv import load_dotenv; load_dotenv(); print(__import__('os').getenv('WEBVOYAGER_API_KEY', '') or __import__('os').getenv('QWEN_API_KEY', ''))"],
                 capture_output=True, text=True
             ).stdout.strip()
 

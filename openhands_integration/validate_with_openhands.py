@@ -35,12 +35,6 @@ if env_path.exists():
 # Configuration
 # ============================================================================
 
-MINIMAX_CONFIG = {
-    "api_key": os.getenv("MINIMAX_API_KEY", ""),
-    "base_url": "https://api.minimaxi.com/v1",
-    "model": os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed"),
-}
-
 OPENHANDS_CONFIG = {
     "workspace_dir": "./openhands_workspace",
     "timeout": 1800,  # 30 minutes
@@ -127,8 +121,6 @@ Be thorough - these projects often have subtle bugs.
         task_file = task_file.resolve()
         workspace = workspace.resolve()
 
-        # Use a model that OpenHands supports natively for validation
-        # Since MiniMax isn't directly supported, we'll use a workaround
         cmd = [
             "openhands",
             "--headless",
@@ -137,21 +129,17 @@ Be thorough - these projects often have subtle bugs.
             "-f", str(task_file),
         ]
 
-        # Start with full environment and add our overrides
-        env = dict(os.environ)
-
-        # Debug: print what keys are available
-        print(f"DEBUG: Available API keys: MINIMAX={'MINIMAX_API_KEY' in env}, DEEPSEEK={'DEEPSEEK_API_KEY' in env}, OPENAI={'OPENAI_API_KEY' in env}")
-
-        # Use MiniMax via OpenAI-compatible API (preferred)
+        # Use Qwen via OpenAI-compatible API
         # litellm requires format "provider/model-name" for custom endpoints
-        if "MINIMAX_API_KEY" in env:
-            env["LLM_API_KEY"] = env["MINIMAX_API_KEY"]
-            minimax_model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
-            env["LLM_MODEL"] = f"openai/{minimax_model}"  # litellm needs openai/provider format
+        env = dict(os.environ)
+        qwen_key = env.get("QWEN_API_KEY") or env.get("WEBVOYAGER_API_KEY")
+        if qwen_key:
+            env["LLM_API_KEY"] = qwen_key
+            qwen_model = os.getenv("QWEN_MODEL", "qwen3.5-plus")
+            env["LLM_MODEL"] = f"openai/{qwen_model}"  # litellm needs openai/provider format
             env["LLM_PROVIDER"] = "openai"
-            env["LLM_BASE_URL"] = "https://api.minimaxi.com/v1"
-            print(f"DEBUG: Using MiniMax for validation ({minimax_model})")
+            env["LLM_BASE_URL"] = os.getenv("QWEN_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            print(f"Using Qwen for validation ({qwen_model})")
         elif "DEEPSEEK_API_KEY" in env:
             env["LLM_API_KEY"] = env["DEEPSEEK_API_KEY"]
             env["LLM_MODEL"] = "deepseek/deepseek-chat"  # Must use provider/model format

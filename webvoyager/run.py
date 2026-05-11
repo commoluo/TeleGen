@@ -190,6 +190,7 @@ def call_gpt4v_api(args, openai_client, messages):
                 max_tokens=1000,
                 seed=args.seed,
                 timeout=60,
+                extra_body={"enable_thinking": False},
             )
 
             prompt_tokens = openai_response.usage.prompt_tokens
@@ -614,8 +615,8 @@ def main():
     parser.add_argument("--test_file", type=str, default="data/test.json")
     parser.add_argument("--max_iter", type=int, default=5)
     parser.add_argument("--api_key", default="key", type=str, help="YOUR_OPENAI_API_KEY")
-    parser.add_argument("--api_model", default=os.getenv("WEBVOYAGER_API_MODEL", "qwen3.5-flash"), type=str)
-    parser.add_argument("--api_base_url", default=os.getenv("WEBVOYAGER_API_BASE_URL", "https://aigc-api.hkust-gz.edu.cn/v1"), type=str)
+    parser.add_argument("--api_model", default=os.getenv("WEBVOYAGER_MODEL", os.getenv("WEBVOYAGER_API_MODEL", "qwen3.5-plus")), type=str)
+    parser.add_argument("--api_base_url", default=os.getenv("WEBVOYAGER_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), type=str)
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--max_attached_imgs", type=int, default=1)

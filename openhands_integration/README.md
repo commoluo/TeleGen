@@ -119,3 +119,36 @@ python openhands_integration/llm_telemetry_extractor.py \
     --input batch_runs/run_20260324_205358/webvoyager_results/000034 \
     --output batch_runs/run_20260324_205358/gen_000034/project_000034_v2_experiment/telemetry_brief.md
 ```
+
+## AST vs LLM Log Injection Comparison
+
+The generation pipeline now supports three instrumentation modes:
+
+- `ast`: deterministic AST-based log insertion via `ast_injector.js`
+- `llm`: task-aware LLM patch insertion via `llm_log_injector.py`
+- `compare`: generate one baseline project, then clone it into AST and LLM variants for side-by-side comparison
+
+### Why the LLM mode is safer now
+
+The LLM injector no longer rewrites full source files. It now:
+
+1. Reads the project requirement and the WebVoyager test tasks from `data/test.jsonl`
+2. Sends the current file plus those task descriptions to the model
+3. Requires the model to return JSON patch operations only
+4. Applies the patch locally with exact-match replacement and syntax validation
+
+### Run Comparison
+
+```bash
+python openhands_integration/openhands_with_logging.py \
+    --single 000004 \
+    --output openhands_runs_compare \
+    --logging-mode compare
+```
+
+Comparison mode writes:
+
+- `project_XXXXXX/`: baseline generated project
+- `project_XXXXXX_ast/`: AST-injected variant
+- `project_XXXXXX_llm/`: LLM patch-injected variant
+- `compare_log_injection_report.json`: side-by-side injection summary
