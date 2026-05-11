@@ -42,12 +42,6 @@ OPENHANDS_CONFIG = {
     "timeout": 1800,  # 30 minutes
 }
 
-MINIMAX_CONFIG = {
-    "api_key": os.getenv("MINIMAX_API_KEY", ""),
-    "base_url": "https://api.minimaxi.com/v1",
-    "model": os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed"),
-}
-
 
 # ============================================================================
 # OpenHands Generator
@@ -275,14 +269,15 @@ project_{project_id}/
 
         env = dict(os.environ)
 
-        # Use MiniMax via OpenAI-compatible API
-        if "MINIMAX_API_KEY" in env:
-            env["LLM_API_KEY"] = env["MINIMAX_API_KEY"]
-            minimax_model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
-            env["LLM_MODEL"] = f"openai/{minimax_model}"
+        # Use Qwen via OpenAI-compatible API
+        qwen_key = env.get("QWEN_API_KEY") or env.get("WEBVOYAGER_API_KEY")
+        if qwen_key:
+            env["LLM_API_KEY"] = qwen_key
+            qwen_model = os.getenv("QWEN_MODEL", "qwen3.5-plus")
+            env["LLM_MODEL"] = f"openai/{qwen_model}"
             env["LLM_PROVIDER"] = "openai"
-            env["LLM_BASE_URL"] = "https://api.minimaxi.com/v1"
-            print(f"  Using MiniMax: {minimax_model}")
+            env["LLM_BASE_URL"] = os.getenv("QWEN_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            print(f"  Using Qwen: {qwen_model}")
 
         env["TTY_INTERACTIVE"] = "1"
 

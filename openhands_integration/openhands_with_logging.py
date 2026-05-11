@@ -25,6 +25,7 @@ import json
 import argparse
 import subprocess
 import shutil
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -208,12 +209,13 @@ project_{project_id}/
         ]
 
         env = dict(os.environ)
-        if "MINIMAX_API_KEY" in env:
-            env["LLM_API_KEY"] = env["MINIMAX_API_KEY"]
-            minimax_model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
-            env["LLM_MODEL"] = f"openai/{minimax_model}"
+        qwen_key = env.get("QWEN_API_KEY") or env.get("WEBVOYAGER_API_KEY")
+        if qwen_key:
+            env["LLM_API_KEY"] = qwen_key
+            qwen_model = os.getenv("QWEN_MODEL", "qwen3.5-plus")
+            env["LLM_MODEL"] = f"openai/{qwen_model}"
             env["LLM_PROVIDER"] = "openai"
-            env["LLM_BASE_URL"] = "https://api.minimaxi.com/v1"
+            env["LLM_BASE_URL"] = os.getenv("QWEN_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         env["TTY_INTERACTIVE"] = "1"
 
         try:
@@ -287,6 +289,101 @@ project_{project_id}/
             return None
 
 
+class AstLogInjector:
+    """Run the AST injector script against a generated project."""
+
+    def __init__(self):
+        self.script_path = Path(__file__).parent / "ast_injector.js"
+
+    def inject_to_project(self, project_path: str) -> Dict[str, Any]:
+        project = Path(project_path)
+        if not project.exists():
+            return {"status": "error", "message": "Project not found"}
+
+        cmd = ["node", str(self.script_path.resolve()), str(project.resolve())]
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600,
+                cwd=str(project.parent.resolve()),
+            )
+            return {
+                "status": "completed" if result.returncode == 0 else "failed",
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+        except subprocess.TimeoutExpired:
+            return {"status": "timeout", "message": "AST injector timed out"}
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+
+def build_task_context(entry: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "project_id": entry.get("id", ""),
+        "instruction": entry.get("instruction", ""),
+        "category": entry.get("Category", {}),
+        "ui_instruct": entry.get("ui_instruct", []),
+    }
+
+
+def copy_project_variant(source_dir: Path, target_dir: Path) -> Path:
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.copytree(source_dir, target_dir)
+    return target_dir
+
+
+def run_selected_injector(
+    logging_mode: str,
+    project_dir: Path,
+    task_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    if logging_mode == "ast":
+        injector = AstLogInjector()
+        return injector.inject_to_project(str(project_dir))
+
+    injector = SemanticLogInjector()
+    return injector.inject_to_project(
+        str(project_dir),
+        task_context=task_context,
+        project_id=task_context.get("project_id"),
+        test_spec_file="data/test.jsonl",
+    )
+
+
+def run_injection_comparison(
+    project_dir: Path,
+    project_id: str,
+    task_context: Dict[str, Any],
+    run_dir: Path,
+) -> Dict[str, Any]:
+    ast_dir = copy_project_variant(project_dir, run_dir / f"project_{project_id}_ast")
+    llm_dir = copy_project_variant(project_dir, run_dir / f"project_{project_id}_llm")
+
+    ast_result = run_selected_injector("ast", ast_dir, task_context)
+    llm_result = run_selected_injector("llm", llm_dir, task_context)
+
+    comparison = {
+        "project_id": project_id,
+        "mode": "compare",
+        "baseline_project": str(project_dir),
+        "ast_project": str(ast_dir),
+        "llm_project": str(llm_dir),
+        "ast": ast_result,
+        "llm": llm_result,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    with open(run_dir / "compare_log_injection_report.json", "w") as handle:
+        json.dump(comparison, handle, indent=2)
+
+    return comparison
+
+
 # ============================================================================
 # Main Pipeline
 # ============================================================================
@@ -296,6 +393,7 @@ def run_pipeline(
     base_output_dir: str = "openhands_runs",
     start_id: Optional[str] = None,
     end_id: Optional[str] = None,
+    logging_mode: str = "llm",
 ):
     """
     Run pipeline with organized output structure.
@@ -315,8 +413,6 @@ def run_pipeline(
     base_output_path.mkdir(parents=True, exist_ok=True)
 
     generator = OpenHandsCodeGenerator()
-    log_injector = SemanticLogInjector()
-
     results = []
     processed = 0
     failed = 0
@@ -388,36 +484,66 @@ def run_pipeline(
 
         print(f"  Generation completed: {result['output_path']}")
 
-        # Step 2: Inject logs using fast LLM injector
-        project_dir = Path(result["output_path"])
-        print(f"  Step 2: Injecting semantic logs (LLM log injector)...")
-        log_result = log_injector.inject_to_project(str(project_dir))
+        task_context = build_task_context(entry)
 
-        # Save log injection report
-        with open(run_dir / "log_injection_report.json", 'w') as f:
-            json.dump({
+        # Step 2: Inject logs using selected injector
+        project_dir = Path(result["output_path"])
+        if logging_mode == "compare":
+            print("  Step 2: Comparing AST injection vs LLM patch injection...")
+            log_result = run_injection_comparison(project_dir, project_id, task_context, run_dir)
+            with open(run_dir / "log_injection_report.json", 'w') as f:
+                json.dump(log_result, f, indent=2)
+
+            ast_status = log_result.get("ast", {}).get("status")
+            llm_status = log_result.get("llm", {}).get("status")
+            overall_status = "completed" if ast_status == "completed" and llm_status == "completed" else "failed"
+            results.append({
                 "project_id": project_id,
                 "run_id": run_id,
-                "status": log_result["status"],
-                "files_processed": log_result.get("files_processed", 0),
-                "files_modified": log_result.get("files_modified", 0),
-                "errors": log_result.get("errors", []),
-                "timestamp": datetime.now().isoformat(),
-            }, f, indent=2)
+                "status": overall_status,
+                "log_status": {
+                    "ast": ast_status,
+                    "llm": llm_status,
+                },
+            })
 
-        results.append({
-            "project_id": project_id,
-            "run_id": run_id,
-            "status": "completed" if log_result["status"] == "completed" else "failed",
-            "log_status": log_result["status"],
-        })
-
-        if log_result["status"] == "completed":
-            print(f"  Log injection completed")
-            processed += 1
+            if overall_status == "completed":
+                print("  Comparison completed")
+                processed += 1
+            else:
+                print("  Comparison failed")
+                failed += 1
         else:
-            print(f"  Log injection failed")
-            failed += 1
+            print(f"  Step 2: Injecting semantic logs ({logging_mode})...")
+            log_result = run_selected_injector(logging_mode, project_dir, task_context)
+
+            with open(run_dir / "log_injection_report.json", 'w') as f:
+                json.dump({
+                    "project_id": project_id,
+                    "run_id": run_id,
+                    "logging_mode": logging_mode,
+                    "status": log_result["status"],
+                    "files_processed": log_result.get("files_processed", 0),
+                    "files_modified": log_result.get("files_modified", 0),
+                    "files_with_patch": log_result.get("files_with_patch", 0),
+                    "errors": log_result.get("errors", []),
+                    "timestamp": datetime.now().isoformat(),
+                }, f, indent=2)
+
+            results.append({
+                "project_id": project_id,
+                "run_id": run_id,
+                "status": "completed" if log_result["status"] == "completed" else "failed",
+                "log_status": log_result["status"],
+                "logging_mode": logging_mode,
+            })
+
+            if log_result["status"] == "completed":
+                print("  Log injection completed")
+                processed += 1
+            else:
+                print("  Log injection failed")
+                failed += 1
 
     summary = {
         "timestamp": datetime.now().strftime('%Y%m%d_%H%M%S'),
@@ -453,6 +579,12 @@ if __name__ == "__main__":
     parser.add_argument("--start", help="Start ID (inclusive)")
     parser.add_argument("--end", help="End ID (inclusive)")
     parser.add_argument("--skip-logging", action="store_true", help="Skip log injection step")
+    parser.add_argument(
+        "--logging-mode",
+        choices=["llm", "ast", "compare"],
+        default="llm",
+        help="Choose log injection mode: llm patch injection, ast injection, or compare both",
+    )
 
     args = parser.parse_args()
 
@@ -470,8 +602,6 @@ if __name__ == "__main__":
                     run_dir.mkdir(parents=True, exist_ok=True)
 
                     generator = OpenHandsCodeGenerator()
-                    log_injector = SemanticLogInjector()
-
                     print(f"Step 1: Generating project {project_id}...")
                     print(f"Run directory: {run_dir.name}")
 
@@ -500,8 +630,15 @@ if __name__ == "__main__":
                     print(json.dumps(result, indent=2))
 
                     if not args.skip_logging and result["status"] == "completed":
-                        print(f"\nStep 2: Injecting logs (LLM log injector)...")
-                        log_result = log_injector.inject_to_project(result["output_path"])
+                        task_context = build_task_context(entry)
+                        project_dir = Path(result["output_path"])
+
+                        if args.logging_mode == "compare":
+                            print("\nStep 2: Comparing AST and LLM log injection...")
+                            log_result = run_injection_comparison(project_dir, project_id, task_context, run_dir)
+                        else:
+                            print(f"\nStep 2: Injecting logs ({args.logging_mode})...")
+                            log_result = run_selected_injector(args.logging_mode, project_dir, task_context)
 
                         with open(run_dir / "log_injection_report.json", 'w') as f:
                             json.dump(log_result, f, indent=2)
@@ -514,4 +651,5 @@ if __name__ == "__main__":
             base_output_dir=args.output,
             start_id=args.start,
             end_id=args.end,
+            logging_mode=args.logging_mode,
         )

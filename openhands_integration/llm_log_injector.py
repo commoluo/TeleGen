@@ -1,688 +1,616 @@
 """
-LLM-based Semantic Log Injector V2
-==================================
+Task-aware LLM semantic log injector.
 
-Directly uses LLM API to inject semantic logs into code files.
-Fast and lightweight - one API call per file with retry logic.
-
-Improvements V2:
-- Retry logic for incomplete code
-- Better validation of LLM output
-- Rate limiting to avoid 429 errors
-- Backup before modification
-- Syntax validation
+This version does not let the model rewrite full files.
+Instead, it asks the model to return structured patch operations for each file,
+and applies those patches locally with exact-match replacement plus syntax checks.
 
 Usage:
     python llm_log_injector.py --project openhands_generated/project_000002
+    python llm_log_injector.py --project openhands_generated/project_000002 --project-id 000002
 """
 
-import os
-import sys
-import json
+from __future__ import annotations
+
 import argparse
-import time
+import concurrent.futures
+import json
+import os
+import re
 import shutil
-from pathlib import Path
+import sys
+import time
 from datetime import datetime
-from typing import Dict, List, Optional
-from dotenv import load_dotenv
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import httpx
+from dotenv import load_dotenv
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Load .env
-env_path = Path(__file__).parent.parent / "alternative_generation" / ".env"
-if env_path.exists():
-    load_dotenv(env_path)
+# Load .env (try root first, then alternative_generation)
+for _env_candidate in [
+    Path(__file__).parent.parent / ".env",
+    Path(__file__).parent.parent / "alternative_generation" / ".env",
+]:
+    if _env_candidate.exists():
+        load_dotenv(_env_candidate)
+        break
 
 
-# ============================================================================
-# LLM Client with retry logic
-# ============================================================================
+MAX_PATCH_OPS_PER_FILE = 8
+MAX_TASKS_IN_PROMPT = 10
+DEFAULT_INJECTION_MAX_WORKERS = 4
+DISABLE_THINKING_EXTRA_BODY = {"enable_thinking": False}
 
-class MiniMaxLLMClient:
-    """Simple MiniMax API client for log injection with retry"""
 
-    def __init__(self, max_retries: int = 2):
-        self.api_key = os.getenv("MINIMAX_API_KEY", "")
-        self.base_url = "https://api.minimaxi.com/v1"
-        self.model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
-        self.max_retries = max_retries
+def infer_project_id(project_path: Path) -> Optional[str]:
+    match = re.search(r"project_(\d{6})", str(project_path))
+    return match.group(1) if match else None
 
-    def inject_logs(self, file_path: Path, file_content: str, is_retry: bool = False) -> Optional[str]:
-        """
-        Send file to LLM and get back content with semantic logs added.
-        Returns the modified content or None on failure.
-        """
-        prompt = self._build_prompt(file_content, file_path.suffix, is_retry=is_retry)
 
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            "max_tokens": 8000,
-            "temperature": 0.1,
-        }
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        for attempt in range(self.max_retries):
-            try:
-                with httpx.Client(timeout=120.0) as client:
-                    response = client.post(
-                        f"{self.base_url}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                    )
-
-                    if response.status_code == 429:
-                        # Rate limited - wait and retry
-                        wait_time = 5 * (attempt + 1)
-                        print(f"    Rate limited, waiting {wait_time}s...")
-                        time.sleep(wait_time)
-                        continue
-
-                    response.raise_for_status()
-                    result = response.json()
-                    message = result["choices"][0]["message"]
-
-                    # Get the raw content
-                    content = message.get("content", "") or message.get("output", "") or ""
-
-                    # Strip thinking blocks (<think>...</think>) - MiniMax embeds thinking in content
-                    import re
-                    content = re.sub(r'<think>[\s\S]*?</think>', '', content)
-
-                    return content.strip()
-
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429:
-                    wait_time = 5 * (attempt + 1)
-                    print(f"    Rate limited, waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                print(f"    HTTP error: {e}")
-                return None
-
-            except Exception as e:
-                print(f"    Error calling API: {e}")
-                return None
-
-        print(f"    Failed after {self.max_retries} attempts")
+def load_task_context(project_id: str, test_spec_file: Path) -> Optional[Dict[str, Any]]:
+    if not test_spec_file.exists():
         return None
 
-    def _build_prompt(self, content: str, file_ext: str, is_retry: bool = False) -> str:
-        """Build prompt for log injection"""
-
-        if file_ext in ['.jsx', '.tsx', '.js']:
-            lang = "JavaScript/React"
-        else:
-            lang = "JavaScript"
-
-        retry_note = "\n## IMPORTANT: Return ONLY the code. NO comments, NO explanations, NO markdown. Just pure JavaScript." if is_retry else ""
-
-        return f"""You are adding SEMANTIC logging to existing {lang} code.
-
-## CRITICAL RULES:
-1. ONLY add console.log statements - do NOT modify any other code
-2. Do NOT change business logic, algorithms, or code structure
-3. Logs MUST be placed INSIDE function bodies or callback functions, NOT at module/file level
-4. Return ONLY the complete modified code file - NO comments, explanations, or markdown formatting{retry_note}
-5. All your reasoning and <think> blocks MUST be completely outside of the final markdown code blocks. You are strictly forbidden from placing <think> tags inside the ``` blocks. The code blocks must contain ONLY syntactically valid executable code.
-
-## Logging Format:
-- Backend API: console.log("[API] " + req.method + " " + req.path + " params:" + JSON.stringify(req.params));
-- Backend data: console.log("[DATA] operation result count: " + result.length);
-- Frontend render: console.log("[RENDER] ComponentName");
-- Frontend API call: console.log("[API_CALL] endpoint:" + url);
-- Frontend interaction: console.log("[ACTION] event:" + eventType);
-
-## Your Task:
-Read the code below and add console.log statements at the MOST IMPORTANT points:
-- INSIDE route handlers (router.get, router.post, etc.)
-- INSIDE controller/handler functions
-- INSIDE callback functions
-- INSIDE React component functions
-
-## Examples of CORRECT log placement:
-```javascript
-// CORRECT - log inside handler function
-router.get('/search', function(req, res) {{
-    console.log("[API] " + req.method + " " + req.path + " params:" + JSON.stringify(req.params));
-    stockController.searchStocks(req, res);
-}});
-
-// CORRECT - log inside controller function
-function searchStocks(req, res) {{
-    console.log("[API] search called");
-    // ... rest of code
-}}
-```
-
-## Examples of INCORRECT log placement:
-```javascript
-// WRONG - module level, req doesn't exist here
-console.log("[API] " + req.method + " " + req.path);
-router.get('/search', handler);
-```
-
-## Output Format:
-Return ONLY the complete JavaScript code. Start with the first line of actual code. Do NOT include any comments, explanations, or analysis. Do NOT wrap in markdown.
-
-Original code:
-{content}
-
-Modified code (no comments, just code):"""
+    with test_spec_file.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            record = json.loads(line)
+            if record.get("id") == project_id:
+                return {
+                    "project_id": project_id,
+                    "instruction": record.get("instruction", ""),
+                    "category": record.get("Category", {}),
+                    "ui_instruct": record.get("ui_instruct", []),
+                }
+    return None
 
 
-# ============================================================================
-# Validation helpers
-# ============================================================================
+def format_task_context(task_context: Optional[Dict[str, Any]]) -> str:
+    if not task_context:
+        return "No test-task context available. Infer logging points only from code structure."
 
-def validate_js_code(code: str, original_code: str) -> bool:
-    """
-    Validate that the modified code is valid and complete.
-    """
-    # Check if essential structures are preserved
-    essential_patterns = [
-        'require(',
-        'module.exports',
-        'export ',
+    category = task_context.get("category") or {}
+    ui_instruct = task_context.get("ui_instruct") or []
+    lines = [
+        f"Project ID: {task_context.get('project_id', 'unknown')}",
+        "Main requirement:",
+        task_context.get("instruction", ""),
+        "",
+        f"Primary category: {category.get('primary_category', 'N/A')}",
+        f"Subcategories: {', '.join(category.get('subcategories', [])) or 'N/A'}",
+        "",
+        "Test tasks and expected behaviors:",
     ]
 
-    # If original had imports/requires, modified should too
-    if 'require(' in original_code and 'require(' not in code:
-        return False
+    for index, item in enumerate(ui_instruct[:MAX_TASKS_IN_PROMPT], start=1):
+        task = item.get("task", "")
+        expected = item.get("expected_result", "")
+        lines.append(f"{index}. Task: {task}")
+        if expected:
+            lines.append(f"   Expected: {expected}")
 
-    # Check for balanced braces
-    if code.count('{') != code.count('}'):
-        return False
+    lines.extend(
+        [
+            "",
+            "Use these tasks to infer the likely user journey, navigation path, backend endpoints, and state transitions that should be logged.",
+        ]
+    )
+    return "\n".join(lines)
 
-    # Check for balanced parentheses
-    if code.count('(') != code.count(')'):
-        return False
 
-    # Check not empty
+class LLMClient:
+    """LLM client that requests structured patch operations. Supports Qwen (primary) and DeepSeek (fallback)."""
+
+    def __init__(self, max_retries: int = 2):
+        self.api_key = os.getenv("QWEN_API_KEY", "")
+        self.base_url = os.getenv("QWEN_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.model = os.getenv("QWEN_MODEL", "qwen3.5-plus")
+        self.max_retries = max_retries
+
+        # Fallback API configuration (DeepSeek)
+        self._fallback_api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        self._fallback_base_url = os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
+        self._fallback_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self._use_fallback = False
+
+    def _get_api_config(self):
+        """Return (api_key, base_url, model) for the current provider."""
+        if self._use_fallback and self._fallback_api_key:
+            return self._fallback_api_key, self._fallback_base_url, self._fallback_model
+        return self.api_key, self.base_url, self.model
+
+    def request_patch(
+        self,
+        file_path: Path,
+        file_content: str,
+        task_context: Optional[Dict[str, Any]] = None,
+        is_retry: bool = False,
+    ) -> Optional[str]:
+        prompt = self._build_prompt(file_path, file_content, task_context, is_retry=is_retry)
+
+        # Try primary provider, then fallback on persistent server errors
+        providers_to_try = ["primary"]
+        if self._fallback_api_key and not self._use_fallback:
+            providers_to_try.append("fallback")
+
+        for provider_label in providers_to_try:
+            use_fb = (provider_label == "fallback")
+            api_key, base_url, model = (
+                (self._fallback_api_key, self._fallback_base_url, self._fallback_model)
+                if use_fb
+                else (self.api_key, self.base_url, self.model)
+            )
+
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 6000,
+                "temperature": 0.1,
+                "extra_body": DISABLE_THINKING_EXTRA_BODY,
+            }
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            url = f"{base_url}/chat/completions"
+
+            transient_error_count = 0
+            for attempt in range(self.max_retries + 1):
+                try:
+                    with httpx.Client(timeout=180.0) as client:
+                        response = client.post(url, headers=headers, json=payload)
+                        if response.status_code == 429:
+                            wait_time = 5 * (attempt + 1)
+                            print(f"    Rate limited ({model}), waiting {wait_time}s...")
+                            time.sleep(wait_time)
+                            continue
+                        if response.status_code >= 500:
+                            transient_error_count += 1
+                            wait_time = 3 * (attempt + 1)
+                            print(f"    Server error {response.status_code} from {model} (attempt {attempt+1}), waiting {wait_time}s...")
+                            time.sleep(wait_time)
+                            continue
+                        response.raise_for_status()
+                        result = response.json()
+                        message = result["choices"][0]["message"]
+                        content = message.get("content", "") or message.get("output", "") or ""
+                        content = re.sub(r"<think>[\s\S]*?</think>", "", content)
+                        if use_fb and not self._use_fallback:
+                            print(f"    Switched to fallback API ({model}) for remaining files")
+                            self._use_fallback = True
+                        return content.strip()
+                except httpx.HTTPStatusError as err:
+                    if err.response.status_code == 429:
+                        wait_time = 5 * (attempt + 1)
+                        print(f"    Rate limited ({model}), waiting {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+                    if err.response.status_code >= 500:
+                        transient_error_count += 1
+                        wait_time = 3 * (attempt + 1)
+                        print(f"    Server error {err.response.status_code} from {model} (attempt {attempt+1}), waiting {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+                    print(f"    HTTP error ({model}): {err}")
+                    break
+                except (httpx.TimeoutException, httpx.ReadTimeout, TimeoutError) as err:
+                    transient_error_count += 1
+                    print(f"    Timeout from {model} (attempt {attempt+1}): {err}")
+                    continue
+                except Exception as err:
+                    print(f"    Error calling API ({model}): {err}")
+                    break
+
+            # If all retries failed with transient errors (server errors / timeouts), try next provider
+            if transient_error_count > 0:
+                print(f"    All retries failed for {model} due to server errors, trying next provider...")
+                continue
+            break
+
+        print(f"    Failed after trying all providers")
+        return None
+
+    def _build_prompt(
+        self,
+        file_path: Path,
+        file_content: str,
+        task_context: Optional[Dict[str, Any]],
+        is_retry: bool = False,
+    ) -> str:
+        if file_path.suffix in {".jsx", ".tsx"}:
+            language = "React"
+        else:
+            language = "JavaScript"
+
+        retry_note = "\nRetry mode: previous output was invalid. Be stricter about JSON escaping and exact snippet matching." if is_retry else ""
+        task_context_text = format_task_context(task_context)
+
+        return f"""You are a code instrumentation assistant for {language}.
+
+Your job is to add telemetry logs that help debug the specific tested product flows.
+You must not rewrite the full file.
+You must return PATCH OPERATIONS ONLY as JSON.
+
+## Goals
+- Use the task descriptions and expected behaviors to infer important user journeys and likely code paths.
+- Add logs only at meaningful points for those tested flows: navigation entry points, event handlers, form submissions, fetch/axios requests, route handlers, controller entry points, and critical branch decisions.
+- Prefer the telemetry prefixes already used in this repo: [Telemetry] Interaction, [Telemetry] Network Request, [Telemetry] Network Response, [Telemetry] StateChange, [Telemetry] Branch.
+
+## Strict Rules
+1. Return exactly one JSON object. No markdown, no prose.
+2. JSON schema:
+{{
+  "operations": [
+    {{
+      "action": "replace",
+      "search": "exact existing snippet from the file",
+      "replace": "replacement snippet with added logs",
+      "reason": "short reason"
+    }}
+  ]
+}}
+3. Every search snippet must appear exactly as-is in the current file.
+4. Keep patches minimal. Do not refactor unrelated logic.
+5. Prefer patches that only add logging lines or the smallest structural change required to place logging safely.
+6. If this file is not relevant, return {{"operations": []}}.
+7. Never invent APIs, routes, or variables not supported by the file.
+8. Do not modify imports unless required for a log insertion pattern.
+9. Do not remove existing code.
+10. At most {MAX_PATCH_OPS_PER_FILE} operations.
+{retry_note}
+
+## Project Task Context
+{task_context_text}
+
+## Current File
+Path: {file_path.as_posix()}
+
+## Current File Content
+{file_content}
+"""
+
+
+def extract_json_object(text: str) -> Optional[str]:
+    if not text:
+        return None
+
+    stripped = text.strip()
+    fenced_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", stripped)
+    if fenced_match:
+        stripped = fenced_match.group(1).strip()
+
+    start = stripped.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(stripped)):
+        char = stripped[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return stripped[start:index + 1]
+    return None
+
+
+def parse_patch_response(raw_text: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    payload_text = extract_json_object(raw_text)
+    if not payload_text:
+        return None, "No JSON object found in model response"
+
+    try:
+        payload = json.loads(payload_text)
+    except json.JSONDecodeError as err:
+        return None, f"Invalid JSON patch payload: {err}"
+
+    if not isinstance(payload, dict):
+        return None, "Patch payload must be a JSON object"
+
+    operations = payload.get("operations")
+    if not isinstance(operations, list):
+        return None, "Patch payload must contain an operations list"
+
+    if len(operations) > MAX_PATCH_OPS_PER_FILE:
+        return None, f"Too many operations: {len(operations)}"
+
+    for index, operation in enumerate(operations, start=1):
+        if not isinstance(operation, dict):
+            return None, f"Operation {index} is not an object"
+        if operation.get("action") != "replace":
+            return None, f"Operation {index} must use action=replace"
+        if not isinstance(operation.get("search"), str) or not operation["search"]:
+            return None, f"Operation {index} missing search snippet"
+        if not isinstance(operation.get("replace"), str):
+            return None, f"Operation {index} missing replacement snippet"
+
+    return payload, None
+
+
+def apply_patch_operations(content: str, operations: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
+    updated = content
+    for index, operation in enumerate(operations, start=1):
+        search = operation["search"]
+        replace = operation["replace"]
+        occurrences = updated.count(search)
+        if occurrences != 1:
+            return None, f"Operation {index} search snippet matched {occurrences} times"
+        updated = updated.replace(search, replace, 1)
+    return updated, None
+
+
+def validate_js_code(code: str, original_code: str) -> bool:
+    if "require(" in original_code and "require(" not in code:
+        return False
+    if code.count("{") != code.count("}"):
+        return False
+    if code.count("(") != code.count(")"):
+        return False
     if not code.strip():
         return False
-
-    # Check minimum length (should be at least 50% of original)
     if len(code) < len(original_code) * 0.5:
         return False
-
     return True
 
 
 def validate_js_syntax(code: str) -> bool:
-    """
-    Basic JavaScript syntax validation.
-    Returns True if syntax appears valid.
-    """
-    # Check for common syntax errors
-    lines = code.split('\n')
-
-    # Track bracket balance
     brace_count = 0
     paren_count = 0
     bracket_count = 0
 
-    for line in lines:
-        # Skip comments and strings for balance check
+    for line in code.split("\n"):
         stripped = line.strip()
-
-        # Skip single line comments
-        if stripped.startswith('//'):
+        if stripped.startswith("//"):
             continue
-
         for char in stripped:
-            if char == '{':
+            if char == "{":
                 brace_count += 1
-            elif char == '}':
+            elif char == "}":
                 brace_count -= 1
-            elif char == '(':
+            elif char == "(":
                 paren_count += 1
-            elif char == ')':
+            elif char == ")":
                 paren_count -= 1
-            elif char == '[':
+            elif char == "[":
                 bracket_count += 1
-            elif char == ']':
+            elif char == "]":
                 bracket_count -= 1
 
     return brace_count == 0 and paren_count == 0 and bracket_count == 0
 
 
-# ============================================================================
-# Log Injector
-# ============================================================================
-
 class SemanticLogInjector:
-    """Inject semantic logs using LLM - one file at a time with retry"""
+    """Inject semantic logs using LLM-generated patch operations."""
 
-    def __init__(self, max_retries: int = 2):
-        self.llm = MiniMaxLLMClient(max_retries=max_retries)
-        self.backup_dir = None
+    def __init__(self, max_retries: int = 2, max_workers: Optional[int] = None):
+        self.llm = LLMClient(max_retries=max_retries)
+        self.backup_dir: Optional[Path] = None
+        self.patch_dir: Optional[Path] = None
+        requested_workers = max_workers or int(os.getenv("INJECTION_MAX_WORKERS", str(DEFAULT_INJECTION_MAX_WORKERS)))
+        self.max_workers = max(1, min(requested_workers, 8))
 
-    def inject_to_project(self, project_path: str) -> Dict:
-        """
-        Inject logs into all backend and frontend files.
-        """
+    def inject_to_project(
+        self,
+        project_path: str,
+        task_context: Optional[Dict[str, Any]] = None,
+        project_id: Optional[str] = None,
+        test_spec_file: str = "data/test.jsonl",
+    ) -> Dict[str, Any]:
         project = Path(project_path)
         if not project.exists():
             return {"status": "error", "message": "Project not found"}
 
-        # Create backup directory
-        self.backup_dir = project / ".log_injector_backup"
-        self.backup_dir.mkdir(exist_ok=True)
+        inferred_project_id = project_id or infer_project_id(project)
+        if not task_context and inferred_project_id:
+            task_context = load_task_context(inferred_project_id, Path(test_spec_file))
 
-        results = {
+        self.backup_dir = project / ".log_injector_backup"
+        self.patch_dir = project / ".llm_log_patches"
+        self.backup_dir.mkdir(exist_ok=True)
+        self.patch_dir.mkdir(exist_ok=True)
+
+        results: Dict[str, Any] = {
             "project": str(project),
+            "project_id": inferred_project_id,
             "timestamp": datetime.now().isoformat(),
+            "mode": "llm_patch",
+            "scope": "frontend_only",
+            "max_workers": self.max_workers,
             "files_processed": 0,
             "files_modified": 0,
             "files_skipped": 0,
+            "files_with_patch": 0,
             "errors": [],
+            "patch_records": [],
         }
 
-        # Collect files to process
-        files_to_process = []
+        files_to_process = self._collect_files(project)
+        print(f"Found {len(files_to_process)} frontend files to process with max_workers={self.max_workers}")
 
-        backend_dir = project / "backend"
-        if backend_dir.exists():
-            for f in backend_dir.rglob("*.js"):
-                if "node_modules" not in str(f) and ".log_injector_backup" not in str(f):
-                    files_to_process.append(f)
-
-        frontend_dir = project / "frontend"
-        if frontend_dir.exists():
-            for ext in ["*.jsx", "*.js", "*.tsx"]:
-                for f in frontend_dir.rglob(ext):
-                    if "node_modules" not in str(f) and ".log_injector_backup" not in str(f) and "dist/" not in str(f):
-                        files_to_process.append(f)
-
-        print(f"Found {len(files_to_process)} files to process")
-
-        for file_path in files_to_process:
-            print(f"  Processing: {file_path.relative_to(project)}")
-
-            try:
-                content = file_path.read_text()
-
-                # Backup original
-                rel_path = file_path.relative_to(project)
-                backup_path = self.backup_dir / rel_path
-                backup_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(file_path, backup_path)
-
-                # Call LLM to get modified content
-                modified = self.llm.inject_logs(file_path, content)
-
-                if not modified:
-                    print(f"    ERROR: LLM returned nothing")
-                    results["errors"].append(f"LLM failed for {file_path.name}")
-                    results["files_skipped"] += 1
-                    continue
-
-                # Extract code from markdown if present
-                modified = self._extract_code(modified)
-
-                # Validate the modified code
-                if not validate_js_code(modified, content):
-                    print(f"    WARNING: Validation failed, attempting retry...")
-
-                    # Retry with more explicit prompt
-                    modified = self.llm.inject_logs(file_path, content, is_retry=True)
-                    if modified:
-                        modified = self._extract_code(modified)
-
-                if not modified or not validate_js_code(modified, content):
-                    print(f"    SKIPPED: Invalid code from LLM")
-                    results["errors"].append(f"Invalid code from LLM for {file_path.name}")
-                    results["files_skipped"] += 1
-                    # Restore from backup
-                    shutil.copy2(backup_path, file_path)
-                    continue
-
-                # Additional syntax validation
-                if not validate_js_syntax(modified):
-                    print(f"    WARNING: Syntax may be invalid")
-                    results["errors"].append(f"Potential syntax issue in {file_path.name}")
-
-                # Write modified content
-                file_path.write_text(modified)
-                results["files_modified"] += 1
-                print(f"    Modified: {file_path.relative_to(project)}")
-
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            future_to_file = {
+                executor.submit(self._process_file, project, file_path, task_context): file_path
+                for file_path in files_to_process
+            }
+            for future in concurrent.futures.as_completed(future_to_file):
+                file_result = future.result()
                 results["files_processed"] += 1
-
-                # Rate limiting delay
-                time.sleep(1)
-
-            except Exception as e:
-                error_msg = f"Error processing {file_path}: {str(e)}"
-                results["errors"].append(error_msg)
-                print(f"    ERROR: {e}")
+                results["files_skipped"] += int(file_result.get("skipped", False))
+                results["files_modified"] += int(file_result.get("modified", False))
+                results["files_with_patch"] += int(file_result.get("has_patch", False))
+                if file_result.get("patch_record"):
+                    results["patch_records"].append(file_result["patch_record"])
+                if file_result.get("error"):
+                    results["errors"].append(file_result["error"])
 
         results["status"] = "completed"
         return results
 
-    def _extract_code(self, text: str) -> str:
-        """
-        Extract code from various formats:
-        1. Markdown code blocks (```javascript, ```js, ```)
-        2. Plain text with prompt/thinking content before actual code
-        3. Plain text with explanation after code
-        """
-        if not text:
-            return ""
+    def _process_file(
+        self,
+        project: Path,
+        file_path: Path,
+        task_context: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        relative_path = file_path.relative_to(project)
+        print(f"  Processing: {relative_path}")
+        outcome: Dict[str, Any] = {
+            "file": relative_path.as_posix(),
+            "modified": False,
+            "skipped": False,
+            "has_patch": False,
+            "patch_record": None,
+            "error": None,
+        }
 
-        original_text = text
-        text = text.strip()
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            backup_path = self._backup_file(project, file_path)
 
-        # Method 1: Try markdown code blocks
-        if "```javascript" in text:
-            start = text.find("```javascript") + len("```javascript")
-            end = text.find("```", start)
-            if end > start:
-                return text[start:end].strip()
+            raw_patch = self.llm.request_patch(file_path, content, task_context=task_context)
+            if not raw_patch:
+                outcome["skipped"] = True
+                outcome["error"] = f"LLM failed for {relative_path}"
+                return outcome
 
-        if "```js" in text:
-            start = text.find("```js") + len("```js")
-            end = text.find("```", start)
-            if end > start:
-                return text[start:end].strip()
+            patch_payload, patch_error = parse_patch_response(raw_patch)
+            if patch_error:
+                print(f"    WARNING: {patch_error}, retrying...")
+                raw_patch = self.llm.request_patch(file_path, content, task_context=task_context, is_retry=True)
+                if not raw_patch:
+                    outcome["skipped"] = True
+                    outcome["error"] = f"Retry failed for {relative_path}"
+                    return outcome
+                patch_payload, patch_error = parse_patch_response(raw_patch)
 
-        if "```" in text:
-            # Find the first ``` after an actual code start indicator
-            first_triple = text.find("```")
-            if first_triple > 0:
-                # Check if it looks like a code block (followed by actual code)
-                after_first = text[first_triple + 3:].strip()
-                if after_first and self._looks_like_code(after_first[:100]):
-                    # This is a code block - extract from after it to the next ```
-                    start = first_triple + 3
-                    end = text.find("```", start)
-                    if end > start:
-                        code = text[start:end].strip()
-                        if self._looks_like_code(code[:50]):
-                            return code
+            if patch_error or not patch_payload:
+                outcome["skipped"] = True
+                outcome["error"] = f"Invalid patch for {relative_path}: {patch_error}"
+                return outcome
 
-        # Method 2: No code block found - find where actual code starts
-        # Common code start patterns
-        code_start_indicators = [
-            # React/JS component patterns
-            r'^function\s+\w+',
-            r'^const\s+\w+\s*=',
-            r'^let\s+\w+\s*=',
-            r'^var\s+\w+\s*=',
-            r'^export\s+',
-            r'^import\s+',
-            r'^class\s+\w+',
-            r'^if\s*\(',
-            r'^for\s*\(',
-            r'^while\s*\(',
-            r'^return\s+',
-            r'^router\.',
-            r'^app\.',
-            r'^server\.',
-            # Express route patterns
-            r'^router\.(get|post|put|delete|patch|use)',
-            r'^module\.exports',
-            # Arrow functions at start
-            r'^\(\s*\)\s*=>',
-            r'^\w+\s*=>',
-        ]
+            patch_record = {
+                "file": relative_path.as_posix(),
+                "operations": patch_payload.get("operations", []),
+            }
+            self._write_patch_record(relative_path, patch_record)
+            outcome["patch_record"] = patch_record
 
-        lines = text.split('\n')
+            operations = patch_payload.get("operations", [])
+            if not operations:
+                print("    No relevant patch operations")
+                outcome["skipped"] = True
+                return outcome
 
-        # Find the first line that looks like actual code
-        code_start_idx = -1
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if not stripped:
-                continue
+            outcome["has_patch"] = True
+            updated_content, apply_error = apply_patch_operations(content, operations)
+            if apply_error or updated_content is None:
+                shutil.copy2(backup_path, file_path)
+                outcome["skipped"] = True
+                outcome["error"] = f"Patch apply failed for {relative_path}: {apply_error}"
+                return outcome
 
-            # Skip obvious non-code lines
-            if self._is_likely_prompt_text(stripped):
-                continue
+            if not validate_js_code(updated_content, content):
+                shutil.copy2(backup_path, file_path)
+                outcome["skipped"] = True
+                outcome["error"] = f"Patch validation failed for {relative_path}"
+                return outcome
 
-            # Check if this line looks like code
-            if self._looks_like_code(stripped):
-                # Make sure it's not in the middle of a prompt/explanation
-                # by checking previous lines aren't all explanatory
-                code_start_idx = i
-                break
+            if not validate_js_syntax(updated_content):
+                shutil.copy2(backup_path, file_path)
+                outcome["skipped"] = True
+                outcome["error"] = f"Potential syntax issue in {relative_path}"
+                return outcome
 
-        if code_start_idx >= 0:
-            # Extract from code start to end (but strip trailing non-code)
-            code_lines = lines[code_start_idx:]
+            file_path.write_text(updated_content, encoding="utf-8")
+            print(f"    Modified: {relative_path}")
+            outcome["modified"] = True
+            return outcome
+        except Exception as err:
+            print(f"    ERROR: {err}")
+            outcome["skipped"] = True
+            outcome["error"] = f"Error processing {relative_path}: {err}"
+            return outcome
 
-            # Find where code ends - look for trailing explanations
-            code_end_idx = len(code_lines)
-            for i in range(len(code_lines) - 1, -1, -1):
-                line = code_lines[i].strip()
-                if not line:
-                    continue
-                # If last few lines are explanations (short, no brackets), cut them
-                if self._is_likely_explanation(line) and i > len(code_lines) - 3:
-                    code_end_idx = i
-                else:
-                    break
+    def _collect_files(self, project: Path) -> List[Path]:
+        files_to_process: List[Path] = []
+        frontend_dir = project / "frontend"
+        if frontend_dir.exists():
+            for extension in ["*.jsx", "*.js", "*.tsx"]:
+                for file_path in sorted(frontend_dir.rglob(extension)):
+                    file_str = str(file_path)
+                    if (
+                        "node_modules" not in file_str
+                        and ".log_injector_backup" not in file_str
+                        and "/dist/" not in file_str
+                    ):
+                        files_to_process.append(file_path)
+        return files_to_process
 
-            result = '\n'.join(code_lines[:code_end_idx]).strip()
-            if result:
-                return result
+    def _backup_file(self, project: Path, file_path: Path) -> Path:
+        assert self.backup_dir is not None
+        relative_path = file_path.relative_to(project)
+        backup_path = self.backup_dir / relative_path
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(file_path, backup_path)
+        return backup_path
 
-        # Fallback: return original stripped
-        return original_text.strip()
+    def _write_patch_record(self, relative_path: Path, patch_record: Dict[str, Any]) -> None:
+        assert self.patch_dir is not None
+        safe_name = relative_path.as_posix().replace("/", "__") + ".json"
+        patch_file = self.patch_dir / safe_name
+        patch_file.write_text(json.dumps(patch_record, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def _looks_like_code(self, text: str) -> bool:
-        """Check if text looks like actual code (not prompt/explanation)"""
-        if not text:
-            return False
-
-        text = text.strip()
-
-        # Very short lines are likely not code
-        if len(text) < 3:
-            return False
-
-        # Skip lines that are clearly explanations or prompts
-        if self._is_likely_prompt_text(text):
-            return False
-
-        # Code typically contains these patterns
-        code_indicators = [
-            '{', '}', '(', ')', ';', '=>', 'function', 'const', 'let', 'var',
-            'return', 'if', 'else', 'for', 'while', 'class', 'import', 'export',
-            'require(', 'module.exports', 'router', 'app.', 'async', 'await',
-            'console.log', 'console.error', 'console.warn',
-            'export default', 'export const', 'export function',
-            'import ', 'from ',
-        ]
-
-        for indicator in code_indicators:
-            if indicator in text:
-                return True
-
-        return False
-
-    def _is_likely_prompt_text(self, text: str) -> bool:
-        """Check if text is likely prompt/instruction text rather than code"""
-        if not text:
-            return True
-
-        text_lower = text.lower()
-
-        # Common prompt/thinking phrases
-        prompt_phrases = [
-            # Direct prompt instructions
-            'the user wants me to',
-            'the user asks',
-            'the user says',
-            'the user says to',
-            'i need to add',
-            'i should add',
-            'let me add',
-            'i will add',
-            'i could add',
-            'here is the modified',
-            'here is the code',
-            "here's the modified",
-            "here's the code",
-            'the modified code',
-            'the code below',
-            'the original code',
-            'modified code',
-            'return only',
-            'do not modify',
-            'do not change',
-            'add console.log',
-            'add 2-5 console.log',
-            'no comments',
-            'no explanations',
-            'no markdown',
-            'important:',
-            'note:',
-            'note that',
-            'note,',
-            'note-',
-            # Analysis/thinking patterns (common in LLM responses)
-            'looking at the',
-            'looking at this',
-            'looking more carefully',
-            'the instructions say',
-            'the user says to add',
-            'the user might want',
-            'the user might be',
-            'this function',
-            'this component',
-            'this code',
-            'this logic',
-            'this is a',
-            'this would',
-            'the following',
-            'as shown',
-            'for example',
-            'in this case',
-            'when the user',
-            'the instruction',
-            'your task is',
-            'your code is',
-            'you are a',
-            "i'm a",
-            # Bullet/number list patterns (common in prompts)
-            '1. only add',
-            '2. do not',
-            '3. logs must',
-            '4. return only',
-            '- `console.log',
-            '- the main',
-            '- formatcurrency',
-            '- gettrendclass',
-            '- getratingclass',
-            '- the component',
-            # Lines starting with common explanation words
-            'which logs',
-            'to log',
-            'as a result',
-            'therefore',
-            'however',
-            'but the',
-            'since the',
-            'although the',
-            'wait, the',
-            'seems to',
-            "i've already",
-            'the existing',
-            'already have',
-            'the current',
-        ]
-
-        # Check if line starts with (not just contains) a prompt phrase
-        for phrase in prompt_phrases:
-            if text_lower.startswith(phrase):
-                return True
-
-        # Skip lines that are mostly these phrases
-        if len(text) < 50:
-            count = sum(1 for phrase in prompt_phrases if phrase in text_lower)
-            if count >= 2:
-                return True
-
-        return False
-
-    def _is_likely_explanation(self, text: str) -> bool:
-        """Check if text is likely an explanation (trailing text after code)"""
-        if not text:
-            return True
-
-        text_lower = text.lower()
-
-        # Common explanation phrases
-        explanation_phrases = [
-            'the code above',
-            'this adds',
-            'this logs',
-            'which logs',
-            'to log',
-            'as a result',
-            'therefore',
-            'however',
-            'note:',
-            'note that',
-            'important:',
-        ]
-
-        for phrase in explanation_phrases:
-            if phrase in text_lower:
-                return True
-
-        # Short lines without brackets or semicolons are likely explanations
-        has_code_chars = any(c in text for c in ['{', '}', ';', '(', ')', '='])
-        if not has_code_chars and len(text) < 80:
-            return True
-
-        return False
-
-
-# ============================================================================
-# Main
-# ============================================================================
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="LLM-based Semantic Log Injector V2")
+    parser = argparse.ArgumentParser(description="Task-aware LLM semantic log injector")
     parser.add_argument("--project", required=True, help="Path to project directory")
+    parser.add_argument("--project-id", help="Project ID used to load test.jsonl context")
+    parser.add_argument("--test-spec-file", default="data/test.jsonl", help="Path to test.jsonl")
     parser.add_argument("--output", help="Output file for results (optional)")
 
     args = parser.parse_args()
 
-    print(f"Starting log injection for: {args.project}")
+    print(f"Starting patch-based log injection for: {args.project}")
     print("=" * 60)
 
     injector = SemanticLogInjector(max_retries=2)
-    results = injector.inject_to_project(args.project)
+    results = injector.inject_to_project(
+        args.project,
+        project_id=args.project_id,
+        test_spec_file=args.test_spec_file,
+    )
 
     print("=" * 60)
-    print(f"Completed!")
+    print("Completed!")
     print(f"  Files processed: {results['files_processed']}")
     print(f"  Files modified: {results['files_modified']}")
     print(f"  Files skipped: {results['files_skipped']}")
+    print(f"  Files with patch: {results['files_with_patch']}")
     print(f"  Errors: {len(results['errors'])}")
 
-    if results['errors']:
+    if results["errors"]:
         print("\nErrors:")
-        for err in results['errors']:
+        for err in results["errors"]:
             print(f"  - {err}")
 
     if args.output:
-        with open(args.output, 'w') as f:
-            json.dump(results, f, indent=2)
+        with open(args.output, "w", encoding="utf-8") as handle:
+            json.dump(results, handle, indent=2, ensure_ascii=False)
         print(f"\nResults saved to: {args.output}")

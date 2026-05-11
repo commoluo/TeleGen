@@ -1,4 +1,5 @@
 .env
+.DS_Store
 extracted
 env
 node_modules
@@ -33,11 +34,27 @@ webvoyager/data/
 
 # OpenHands 工作区和验证结果
 openhands_workspace/
+openhands_generated/
 validation_results/
+
+# Experiment/runtime artifacts
+batch_runs/
+experiment_logs/
+webvoyager_results/
+webvoyager_task_*.jsonl
+_inspect_results*.py
+tmp_*.py
+ullSymbols
+rerun_wv1_*.sh
+run_relabel*.sh
+start_pipeline.sh
+组会汇报_*.md
+openhands_integration/run_relay_*.sh
+
+# Local editor/agent settings
+.claude/settings.local.json
 
 # 大型数据文件
 *.zip
 *.tar.gz
 *.log
-
-batch_runs/

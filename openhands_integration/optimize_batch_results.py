@@ -13,8 +13,13 @@ from typing import Dict, List
 
 from dotenv import load_dotenv
 
+from experiment_metadata import update_run_metadata
+from model_config import apply_unified_model, normalize_model_name
+from webvoyager_eval import count_successes
+
 from dynamic_repair_pipeline import (
     build_paths,
+    derive_experiment_workspace,
     phase0_freeze_source,
     phase1_build_telemetry_brief,
     phase1_build_telemetry_report,
@@ -23,47 +28,15 @@ from dynamic_repair_pipeline import (
 )
 
 
+def _clear_proxy_env() -> None:
+    """Remove proxy env vars that break local WebVoyager/httpx runs."""
+    for var in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ.pop(var, None)
+
+
 def _count_v1_passes(webvoyager_results: Path) -> int:
-    """Count tasks that passed (YES verdict) in the v1 WebVoyager results."""
-    import re
-    count = 0
-    if not webvoyager_results.exists():
-        return count
-    for task_dir in webvoyager_results.iterdir():
-        if not task_dir.is_dir() or not task_dir.name.startswith("task"):
-            continue
-        log_file = task_dir / "interact_messages.json"
-        if not log_file.exists():
-            continue
-        try:
-            msgs = json.loads(log_file.read_text(encoding="utf-8"))
-            verdict = "UNKNOWN"
-            for m in reversed(msgs):
-                if not isinstance(m, dict) or m.get("role") != "assistant":
-                    continue
-                content = re.sub(r"<think>.*?</think>", "", m.get("content", ""), flags=re.DOTALL)
-                if "ANSWER;" not in content:
-                    continue
-                answer_text = content[content.find("ANSWER;") + 7:].strip()
-                first_token = answer_text.split()[0].strip(".,;:").upper() if answer_text.split() else ""
-                if first_token == "YES":
-                    verdict = "YES"
-                elif first_token == "NO":
-                    verdict = "NO"
-                else:
-                    snippet = answer_text[:80].upper()
-                    if re.search(r"\bYES\b", snippet):
-                        verdict = "YES"
-                    elif re.search(r"\bNO\b", snippet):
-                        verdict = "NO"
-                    else:
-                        verdict = "YES"
-                break
-            if verdict == "YES":
-                count += 1
-        except Exception:
-            pass
-    return count
+    """Count tasks that passed using the WebVoyager-style auto evaluator."""
+    return count_successes(webvoyager_results)
 
 
 def _rollback_to_v1(source_workspace: Path, experiment_workspace: Path) -> None:
@@ -94,6 +67,29 @@ def _discover_projects(run_dir: Path) -> List[str]:
     return ids
 
 
+def _resolve_source_workspace(run_dir: Path, project_id: str, source_variant: str) -> Path:
+    gen_dir = run_dir / f"gen_{project_id}"
+    variant = (source_variant or "default").strip().lower()
+    if variant == "ast":
+        return gen_dir / f"project_{project_id}_AST"
+    if variant == "llm":
+        return gen_dir / f"project_{project_id}_LLM"
+
+    generation_report = gen_dir / "generation_report.json"
+    if generation_report.exists():
+        try:
+            payload = json.loads(generation_report.read_text(encoding="utf-8"))
+            output_path = Path(str(payload.get("output") or "")).name
+            if output_path == f"project_{project_id}_AST":
+                return gen_dir / output_path
+            if output_path == f"project_{project_id}_LLM":
+                return gen_dir / output_path
+        except Exception:
+            pass
+
+    return gen_dir / f"project_{project_id}"
+
+
 def _load_failed_projects(run_dir: Path) -> List[str]:
     batch_file = run_dir / "batch_results.json"
     if not batch_file.exists():
@@ -113,6 +109,16 @@ def _load_failed_projects(run_dir: Path) -> List[str]:
     return sorted(set(failed))
 
 
+def _load_existing_summary(summary_file: Path) -> Dict[str, object]:
+    if not summary_file.exists():
+        return {}
+    try:
+        payload = json.loads(summary_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Batch optimize one run directory with dynamic repair SOP")
     parser.add_argument("--run-dir", required=True, help="Path to batch_runs/run_xxx directory")
@@ -125,13 +131,15 @@ def main() -> None:
     parser.add_argument("--start", help="Start project id, e.g. 000001")
     parser.add_argument("--end", help="End project id, e.g. 000043")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of projects; 0 means all")
+    parser.add_argument("--source-variant", choices=["default", "ast", "llm"], default="default", help="Select source workspace variant for phase2/phase3")
     parser.add_argument("--skip-phase2", action="store_true")
     parser.add_argument("--skip-phase3", action="store_true", help="Skip v2 WebVoyager test after optimization")
     parser.add_argument("--skip-llm-brief", action="store_true", help="Skip LLM telemetry brief extraction step")
     parser.add_argument("--llm-brief-model", default=None, help="Model override for telemetry brief extraction")
-    parser.add_argument("--llm-brief-max-chars", type=int, default=180000)
-    parser.add_argument("--llm-brief-max-tokens", type=int, default=3500)
-    parser.add_argument("--llm-brief-max-rounds", type=int, default=6)
+    parser.add_argument("--model", default=None, help="Use one explicit model for all LLM calls in this optimize run")
+    parser.add_argument("--llm-brief-max-chars", type=int, default=40000)
+    parser.add_argument("--llm-brief-max-tokens", type=int, default=1500)
+    parser.add_argument("--llm-brief-max-rounds", type=int, default=2)
     parser.add_argument("--llm-brief-retries-per-model", type=int, default=3)
     parser.add_argument("--llm-brief-retry-backoff-seconds", type=float, default=2.0)
     parser.add_argument("--failed-only", action="store_true", help="Only optimize projects marked failed/non-success in batch_results.json")
@@ -146,35 +154,83 @@ def main() -> None:
     workspace_root = Path(__file__).resolve().parent.parent
     load_dotenv(workspace_root / ".env")
     load_dotenv(workspace_root / "alternative_generation" / ".env")
+    _clear_proxy_env()
+
+    unified_model = normalize_model_name(args.model)
+    if unified_model:
+        apply_unified_model(unified_model)
+        args.llm_brief_model = unified_model
 
     # Bridge common repo env names to OpenHands-required names when absent.
     if not os.getenv("LLM_API_KEY"):
         os.environ["LLM_API_KEY"] = (
-            os.getenv("MINIMAX_API_KEY")
+            os.getenv("QWEN_API_KEY")
             or os.getenv("WEBVOYAGER_API_KEY")
             or os.getenv("DEEPSEEK_API_KEY")
             or os.getenv("OPENAI_API_KEY")
             or ""
         )
     if not os.getenv("LLM_MODEL"):
-        base_model = os.getenv("MINIMAX_MODEL") or os.getenv("WEBVOYAGER_MODEL") or os.getenv("DEFAULT_MODEL") or "MiniMax-M2.7-highspeed"
+        base_model = os.getenv("PIPELINE_MODEL") or os.getenv("QWEN_MODEL") or os.getenv("WEBVOYAGER_MODEL") or os.getenv("DEFAULT_MODEL") or "qwen3.5-plus"
         if base_model and "/" not in base_model:
             base_model = f"openai/{base_model}"
         os.environ["LLM_MODEL"] = base_model
     if not os.getenv("LLM_BASE_URL"):
         os.environ["LLM_BASE_URL"] = (
-            os.getenv("MINIMAX_BASE_URL")
+            os.getenv("QWEN_API_BASE_URL")
             or os.getenv("WEBVOYAGER_BASE_URL")
             or os.getenv("DEEPSEEK_API_BASE_URL")
             or os.getenv("OPENAI_BASE_URL")
-            or "https://api.minimaxi.com/v1"
+            or "https://dashscope.aliyuncs.com/compatible-mode/v1"
         )
     os.environ.setdefault("LLM_PROVIDER", "openai")
+
+    if unified_model:
+        print(f"[OPTIMIZE] Unified model: {unified_model}")
 
     run_dir = Path(args.run_dir).resolve()
     prompt_template = Path(args.prompt_template).resolve()
     if not run_dir.exists():
         raise FileNotFoundError(f"run dir not found: {run_dir}")
+
+    metadata_file = update_run_metadata(
+        run_dir,
+        {
+            "optimize_entrypoint": "openhands_integration/optimize_batch_results.py",
+            "stages": {
+                "optimize": {
+                    "started_at": datetime.now().isoformat(),
+                    "steps": [
+                        "v2_repair",
+                        "wv_v2",
+                    ],
+                    "repair": {
+                        "enabled": not args.skip_phase2,
+                        "max_iterations": args.max_iterations,
+                        "timeout_seconds": args.timeout,
+                        "rounds": args.repair_rounds,
+                        "prompt_template": str(prompt_template),
+                    },
+                    "telemetry_brief": {
+                        "enabled": not args.skip_llm_brief,
+                        "model": args.llm_brief_model or os.getenv("PIPELINE_MODEL") or None,
+                        "max_chars": args.llm_brief_max_chars,
+                        "max_tokens": args.llm_brief_max_tokens,
+                        "max_rounds": args.llm_brief_max_rounds,
+                        "retries_per_model": args.llm_brief_retries_per_model,
+                    },
+                    "webvoyager_v2": {
+                        "enabled": not args.skip_phase3,
+                        "max_iter": args.webvoyager_max_iter,
+                        "timeout_seconds": args.webvoyager_timeout,
+                        "port": args.webvoyager_port,
+                        "eval_model": os.getenv("WEBVOYAGER_EVAL_MODEL") or None,
+                    },
+                },
+            },
+        },
+    )
+    print(f"[OPTIMIZE] Metadata file: {metadata_file}")
 
     all_ids = _discover_projects(run_dir)
     if args.failed_only:
@@ -188,20 +244,34 @@ def main() -> None:
     if args.limit and args.limit > 0:
         all_ids = all_ids[: args.limit]
 
+    summary_file = run_dir / "dynamic_repair_batch_summary.json"
+    existing_summary = _load_existing_summary(summary_file)
+    project_order: List[str] = []
+    project_items_by_id: Dict[str, Dict[str, object]] = {}
+    for existing_item in existing_summary.get("projects", []):
+        if not isinstance(existing_item, dict):
+            continue
+        project_id = str(existing_item.get("project_id", "")).zfill(6)
+        if not project_id:
+            continue
+        project_order.append(project_id)
+        project_items_by_id[project_id] = existing_item
+
     summary: Dict[str, object] = {
         "run_dir": str(run_dir),
-        "started_at": datetime.now().isoformat(),
-        "total_selected": len(all_ids),
-        "projects": [],
+        "started_at": existing_summary.get("started_at") or datetime.now().isoformat(),
+        "total_selected": max(int(existing_summary.get("total_selected", 0) or 0), len(all_ids), len(project_order)),
+        "projects": [project_items_by_id[project_id] for project_id in project_order],
     }
 
     for idx, pid in enumerate(all_ids, start=1):
-        source_workspace = run_dir / f"gen_{pid}" / f"project_{pid}"
+        source_workspace = _resolve_source_workspace(run_dir, pid, args.source_variant)
         webvoyager_results = run_dir / "webvoyager_results" / pid
         item: Dict[str, object] = {
             "project_id": pid,
             "index": idx,
             "source_workspace": str(source_workspace),
+            "experiment_workspace": str(derive_experiment_workspace(source_workspace)),
             "webvoyager_results": str(webvoyager_results),
             "status": "unknown",
             "phase0": {},
@@ -212,12 +282,18 @@ def main() -> None:
         }
 
         try:
+            print(f"\n{'─'*60}", flush=True)
+            print(f"[{idx}/{len(all_ids)}] {pid} — start", flush=True)
+            print(f"{'─'*60}", flush=True)
             paths = build_paths(source_workspace=source_workspace, webvoyager_results=webvoyager_results)
+            print(f"[{idx}/{len(all_ids)}] [{pid}] Phase0: freezing source ...", flush=True)
             item["phase0"] = phase0_freeze_source(paths)
+            print(f"[{idx}/{len(all_ids)}] [{pid}] Phase1: building telemetry report ...", flush=True)
             item["phase1"] = phase1_build_telemetry_report(paths, debounce_seconds=args.debounce_seconds)
             if args.skip_llm_brief:
                 item["phase1_brief"] = {"status": "skipped"}
             else:
+                print(f"[{idx}/{len(all_ids)}] [{pid}] Phase1 brief: LLM extraction (model={args.llm_brief_model or 'default'}) ...", flush=True)
                 item["phase1_brief"] = phase1_build_telemetry_brief(
                     paths=paths,
                     model=args.llm_brief_model,
@@ -227,9 +303,11 @@ def main() -> None:
                     retries_per_model=args.llm_brief_retries_per_model,
                     retry_backoff_seconds=args.llm_brief_retry_backoff_seconds,
                 )
+                print(f"[{idx}/{len(all_ids)}] [{pid}] Phase1 brief: {item['phase1_brief'].get('status', '?')}", flush=True)
             if args.skip_phase2:
                 item["phase2"] = {"status": "skipped"}
             else:
+                print(f"[{idx}/{len(all_ids)}] [{pid}] Phase2: OpenHands repair (max_iter={args.max_iterations}, timeout={args.timeout}s) ...", flush=True)
                 item["phase2"] = phase2_openhands_repair(
                     paths=paths,
                     prompt_template=prompt_template,
@@ -238,12 +316,14 @@ def main() -> None:
                     project_id=pid,
                     test_specs_file=Path(__file__).resolve().parent.parent / "data" / "test.jsonl",
                 )
+                print(f"[{idx}/{len(all_ids)}] [{pid}] Phase2: {item['phase2'].get('status', '?')}", flush=True)
 
             if args.skip_phase3:
                 item["phase3"] = {"status": "skipped"}
             else:
                 phase2_status = str((item.get("phase2") or {}).get("status", ""))
                 if phase2_status in {"success", "skipped"}:
+                    print(f"[{idx}/{len(all_ids)}] [{pid}] Phase3: WebVoyager v2 test (timeout={args.webvoyager_timeout}s) ...", flush=True)
                     item["phase3"] = phase3_webvoyager_test(
                         paths=paths,
                         project_id=pid,
@@ -251,6 +331,7 @@ def main() -> None:
                         timeout_seconds=args.webvoyager_timeout,
                         max_iter=args.webvoyager_max_iter,
                     )
+                    print(f"[{idx}/{len(all_ids)}] [{pid}] Phase3: {item['phase3'].get('status', '?')} (ok={item['phase3'].get('success_count',0)}, fail={item['phase3'].get('failed_count',0)})", flush=True)
                     # ── Quality gate: rollback if v2 is worse than v1 ──────
                     v1_passes = _count_v1_passes(webvoyager_results)
                     v2_passes = int((item["phase3"] or {}).get("success_count", 0))
@@ -339,14 +420,18 @@ def main() -> None:
             item["status"] = "failed"
             item["error"] = str(exc)
 
-        summary["projects"].append(item)
+        if pid not in project_items_by_id:
+            project_order.append(pid)
+        project_items_by_id[pid] = item
+        summary["projects"] = [project_items_by_id[project_id] for project_id in project_order]
+        summary["total_selected"] = max(int(summary.get("total_selected", 0) or 0), len(project_order), len(all_ids))
 
-        out = run_dir / "dynamic_repair_batch_summary.json"
+        out = summary_file
         out.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[{idx}/{len(all_ids)}] {pid}: {item['status']}")
 
     summary["finished_at"] = datetime.now().isoformat()
-    out = run_dir / "dynamic_repair_batch_summary.json"
+    out = summary_file
     out.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Summary written to: {out}")
 
