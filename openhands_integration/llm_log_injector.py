@@ -30,14 +30,12 @@ from dotenv import load_dotenv
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Load .env (try root first, then alternative_generation)
-for _env_candidate in [
-    Path(__file__).parent.parent / ".env",
-    Path(__file__).parent.parent / "alternative_generation" / ".env",
-]:
-    if _env_candidate.exists():
-        load_dotenv(_env_candidate)
-        break
+from openhands_integration.model_config import to_direct_api_model
+
+# Load .env
+_env_path = Path(__file__).parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
 
 
 MAX_PATCH_OPS_PER_FILE = 8
@@ -102,18 +100,17 @@ def format_task_context(task_context: Optional[Dict[str, Any]]) -> str:
 
 
 class LLMClient:
-    """LLM client that requests structured patch operations. Supports Qwen (primary) and DeepSeek (fallback)."""
+    """LLM client that requests structured patch operations via DeepSeek."""
 
     def __init__(self, max_retries: int = 2):
-        self.api_key = os.getenv("QWEN_API_KEY", "")
-        self.base_url = os.getenv("QWEN_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.model = os.getenv("QWEN_MODEL", "qwen3.5-plus")
+        self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        self.base_url = os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
+        self.model = to_direct_api_model(os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"))
         self.max_retries = max_retries
 
-        # Fallback API configuration (DeepSeek)
-        self._fallback_api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        self._fallback_base_url = os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
-        self._fallback_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self._fallback_api_key = ""
+        self._fallback_base_url = ""
+        self._fallback_model = ""
         self._use_fallback = False
 
     def _get_api_config(self):
@@ -131,10 +128,8 @@ class LLMClient:
     ) -> Optional[str]:
         prompt = self._build_prompt(file_path, file_content, task_context, is_retry=is_retry)
 
-        # Try primary provider, then fallback on persistent server errors
+        # Keep log injection on DeepSeek; WebVoyager keeps the Qwen multimodal path.
         providers_to_try = ["primary"]
-        if self._fallback_api_key and not self._use_fallback:
-            providers_to_try.append("fallback")
 
         for provider_label in providers_to_try:
             use_fb = (provider_label == "fallback")
@@ -147,9 +142,8 @@ class LLMClient:
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 6000,
+                "max_tokens": 8000,
                 "temperature": 0.1,
-                "extra_body": DISABLE_THINKING_EXTRA_BODY,
             }
             headers = {
                 "Authorization": f"Bearer {api_key}",
@@ -195,10 +189,19 @@ class LLMClient:
                         time.sleep(wait_time)
                         continue
                     print(f"    HTTP error ({model}): {err}")
+                    response_text = (err.response.text or "")[:500]
+                    if response_text:
+                        print(f"    Response body: {response_text}")
                     break
                 except (httpx.TimeoutException, httpx.ReadTimeout, TimeoutError) as err:
                     transient_error_count += 1
                     print(f"    Timeout from {model} (attempt {attempt+1}): {err}")
+                    continue
+                except httpx.TransportError as err:
+                    transient_error_count += 1
+                    wait_time = 3 * (attempt + 1)
+                    print(f"    Transport error from {model} (attempt {attempt+1}): {err}; waiting {wait_time}s...")
+                    time.sleep(wait_time)
                     continue
                 except Exception as err:
                     print(f"    Error calling API ({model}): {err}")
@@ -225,7 +228,7 @@ class LLMClient:
         else:
             language = "JavaScript"
 
-        retry_note = "\nRetry mode: previous output was invalid. Be stricter about JSON escaping and exact snippet matching." if is_retry else ""
+        retry_note = "\nRetry mode: previous output was invalid or could not be applied. Every search snippet must be long enough to match exactly once; include surrounding function context for repeated lines." if is_retry else ""
         task_context_text = format_task_context(task_context)
 
         return f"""You are a code instrumentation assistant for {language}.
@@ -252,7 +255,7 @@ You must return PATCH OPERATIONS ONLY as JSON.
     }}
   ]
 }}
-3. Every search snippet must appear exactly as-is in the current file.
+3. Every search snippet must appear exactly as-is in the current file and match exactly once. Include enough surrounding code to make repeated lines unique.
 4. Keep patches minimal. Do not refactor unrelated logic.
 5. Prefer patches that only add logging lines or the smallest structural change required to place logging safely.
 6. If this file is not relevant, return {{"operations": []}}.
@@ -282,15 +285,47 @@ def extract_json_object(text: str) -> Optional[str]:
     if fenced_match:
         stripped = fenced_match.group(1).strip()
 
+    # ── Standard extraction: first { … last matching } ──
     start = stripped.find("{")
-    if start == -1:
+    if start != -1:
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(stripped)):
+            char = stripped[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return stripped[start:index + 1]
+
+    # ── Fallback: model returned JSON-like content without a wrapping object ──
+    # Try to locate "operations" and rebuild a valid {"operations": [...]} object.
+    ops_idx = stripped.find('"operations"')
+    if ops_idx == -1:
+        return None
+
+    bracket_idx = stripped.find("[", ops_idx)
+    if bracket_idx == -1:
         return None
 
     depth = 0
     in_string = False
     escaped = False
-    for index in range(start, len(stripped)):
-        char = stripped[index]
+    for i in range(bracket_idx, len(stripped)):
+        char = stripped[i]
         if in_string:
             if escaped:
                 escaped = False
@@ -299,15 +334,19 @@ def extract_json_object(text: str) -> Optional[str]:
             elif char == '"':
                 in_string = False
             continue
-
         if char == '"':
             in_string = True
-        elif char == "{":
+        elif char == "[":
             depth += 1
-        elif char == "}":
+        elif char == "]":
             depth -= 1
             if depth == 0:
-                return stripped[start:index + 1]
+                reconstructed = '{"operations": ' + stripped[bracket_idx:i + 1] + "}"
+                try:
+                    json.loads(reconstructed)
+                    return reconstructed
+                except json.JSONDecodeError:
+                    return None
     return None
 
 
@@ -460,7 +499,10 @@ class SemanticLogInjector:
                 if file_result.get("error"):
                     results["errors"].append(file_result["error"])
 
-        results["status"] = "completed"
+        if results["errors"]:
+            results["status"] = "partial_success" if results["files_with_patch"] else "failed"
+        else:
+            results["status"] = "completed"
         return results
 
     def _process_file(
@@ -490,10 +532,12 @@ class SemanticLogInjector:
                 outcome["error"] = f"LLM failed for {relative_path}"
                 return outcome
 
+            retried = False
             patch_payload, patch_error = parse_patch_response(raw_patch)
             if patch_error:
                 print(f"    WARNING: {patch_error}, retrying...")
                 raw_patch = self.llm.request_patch(file_path, content, task_context=task_context, is_retry=True)
+                retried = True
                 if not raw_patch:
                     outcome["skipped"] = True
                     outcome["error"] = f"Retry failed for {relative_path}"
@@ -505,15 +549,14 @@ class SemanticLogInjector:
                 outcome["error"] = f"Invalid patch for {relative_path}: {patch_error}"
                 return outcome
 
-            patch_record = {
-                "file": relative_path.as_posix(),
-                "operations": patch_payload.get("operations", []),
-            }
-            self._write_patch_record(relative_path, patch_record)
-            outcome["patch_record"] = patch_record
-
             operations = patch_payload.get("operations", [])
             if not operations:
+                patch_record = {
+                    "file": relative_path.as_posix(),
+                    "operations": operations,
+                }
+                self._write_patch_record(relative_path, patch_record)
+                outcome["patch_record"] = patch_record
                 print("    No relevant patch operations")
                 outcome["skipped"] = True
                 return outcome
@@ -521,10 +564,51 @@ class SemanticLogInjector:
             outcome["has_patch"] = True
             updated_content, apply_error = apply_patch_operations(content, operations)
             if apply_error or updated_content is None:
-                shutil.copy2(backup_path, file_path)
-                outcome["skipped"] = True
-                outcome["error"] = f"Patch apply failed for {relative_path}: {apply_error}"
-                return outcome
+                print(f"    WARNING: {apply_error}, retrying...")
+                raw_patch = self.llm.request_patch(file_path, content, task_context=task_context, is_retry=True)
+                retried = True
+                if raw_patch:
+                    retry_payload, retry_error = parse_patch_response(raw_patch)
+                    if retry_error:
+                        apply_error = retry_error
+                    elif retry_payload:
+                        retry_operations = retry_payload.get("operations", [])
+                        if not retry_operations:
+                            operations = retry_operations
+                            patch_payload = retry_payload
+                            patch_record = {
+                                "file": relative_path.as_posix(),
+                                "operations": operations,
+                                "retry": True,
+                            }
+                            self._write_patch_record(relative_path, patch_record)
+                            outcome["patch_record"] = patch_record
+                            print("    No relevant patch operations")
+                            outcome["skipped"] = True
+                            return outcome
+                        retry_updated, retry_apply_error = apply_patch_operations(content, retry_operations)
+                        if retry_apply_error or retry_updated is None:
+                            apply_error = retry_apply_error
+                        else:
+                            patch_payload = retry_payload
+                            operations = retry_operations
+                            updated_content = retry_updated
+                            apply_error = None
+
+                if apply_error or updated_content is None:
+                    shutil.copy2(backup_path, file_path)
+                    outcome["skipped"] = True
+                    outcome["error"] = f"Patch apply failed for {relative_path}: {apply_error}"
+                    return outcome
+
+            patch_record = {
+                "file": relative_path.as_posix(),
+                "operations": operations,
+            }
+            if retried:
+                patch_record["retry"] = True
+            self._write_patch_record(relative_path, patch_record)
+            outcome["patch_record"] = patch_record
 
             if not validate_js_code(updated_content, content):
                 shutil.copy2(backup_path, file_path)

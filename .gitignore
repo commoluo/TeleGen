@@ -13,18 +13,6 @@ outputs
 outputs.zip
 gather_statistics
 
-# Alternative Generation 数据目录
-alternative_generation/
-alternative_generation/generated_websites/
-alternative_generation/webvoyager_current_backup_*/
-alternative_generation/results_for_*_cycle/
-alternative_generation/results_for_*_cycle_*/
-alternative_generation/debug_logged_projects/
-alternative_generation/optimized_code/
-alternative_generation/merged_console_logs/
-alternative_generation/optimization_logs/
-alternative_generation/__pycache__/
-alternative_generation/api_docs/
 
 # WebVoyager 数据目录
 webvoyager/webvoyager_results/

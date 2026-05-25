@@ -70,8 +70,8 @@ def _discover_projects(run_dir: Path) -> List[str]:
 def _resolve_source_workspace(run_dir: Path, project_id: str, source_variant: str) -> Path:
     gen_dir = run_dir / f"gen_{project_id}"
     variant = (source_variant or "default").strip().lower()
-    if variant == "ast":
-        return gen_dir / f"project_{project_id}_AST"
+    if variant == "clean":
+        return gen_dir / f"project_{project_id}"
     if variant == "llm":
         return gen_dir / f"project_{project_id}_LLM"
 
@@ -80,8 +80,6 @@ def _resolve_source_workspace(run_dir: Path, project_id: str, source_variant: st
         try:
             payload = json.loads(generation_report.read_text(encoding="utf-8"))
             output_path = Path(str(payload.get("output") or "")).name
-            if output_path == f"project_{project_id}_AST":
-                return gen_dir / output_path
             if output_path == f"project_{project_id}_LLM":
                 return gen_dir / output_path
         except Exception:
@@ -131,7 +129,10 @@ def main() -> None:
     parser.add_argument("--start", help="Start project id, e.g. 000001")
     parser.add_argument("--end", help="End project id, e.g. 000043")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of projects; 0 means all")
-    parser.add_argument("--source-variant", choices=["default", "ast", "llm"], default="default", help="Select source workspace variant for phase2/phase3")
+    parser.add_argument("--source-variant", choices=["default", "clean", "ast", "llm"], default="default", help="Select source workspace variant for phase2/phase3")
+    parser.add_argument("--summary-file", default=None, help="Write summary to this file instead of dynamic_repair_batch_summary.json")
+    parser.add_argument("--branch-name", default=None, help="Label this optimize run, e.g. logged or no_log")
+    parser.add_argument("--skip-telemetry-report", action="store_true", help="Skip sanitized telemetry report generation before repair")
     parser.add_argument("--skip-phase2", action="store_true")
     parser.add_argument("--skip-phase3", action="store_true", help="Skip v2 WebVoyager test after optimization")
     parser.add_argument("--skip-llm-brief", action="store_true", help="Skip LLM telemetry brief extraction step")
@@ -153,7 +154,6 @@ def main() -> None:
     # Ensure standalone batch runs can resolve model credentials.
     workspace_root = Path(__file__).resolve().parent.parent
     load_dotenv(workspace_root / ".env")
-    load_dotenv(workspace_root / "alternative_generation" / ".env")
     _clear_proxy_env()
 
     unified_model = normalize_model_name(args.model)
@@ -162,18 +162,24 @@ def main() -> None:
         args.llm_brief_model = unified_model
 
     # Bridge common repo env names to OpenHands-required names when absent.
-    if not os.getenv("LLM_API_KEY"):
+    if os.getenv("DEEPSEEK_API_KEY"):
+        os.environ["LLM_API_KEY"] = os.getenv("DEEPSEEK_API_KEY", "")
+        os.environ["LLM_MODEL"] = os.getenv("DEEPSEEK_MODEL") or "deepseek/deepseek-v4-flash"
+        if "/" not in os.environ["LLM_MODEL"]:
+            os.environ["LLM_MODEL"] = f"deepseek/{os.environ['LLM_MODEL']}"
+        os.environ["LLM_BASE_URL"] = os.getenv("DEEPSEEK_API_BASE_URL") or "https://api.deepseek.com"
+        os.environ["LLM_PROVIDER"] = "deepseek"
+    elif not os.getenv("LLM_API_KEY"):
         os.environ["LLM_API_KEY"] = (
             os.getenv("QWEN_API_KEY")
             or os.getenv("WEBVOYAGER_API_KEY")
-            or os.getenv("DEEPSEEK_API_KEY")
             or os.getenv("OPENAI_API_KEY")
             or ""
         )
     if not os.getenv("LLM_MODEL"):
-        base_model = os.getenv("PIPELINE_MODEL") or os.getenv("QWEN_MODEL") or os.getenv("WEBVOYAGER_MODEL") or os.getenv("DEFAULT_MODEL") or "qwen3.5-plus"
+        base_model = os.getenv("DEEPSEEK_MODEL") or os.getenv("PIPELINE_MODEL") or os.getenv("DEFAULT_MODEL") or "deepseek-v4-flash"
         if base_model and "/" not in base_model:
-            base_model = f"openai/{base_model}"
+            base_model = f"deepseek/{base_model}"
         os.environ["LLM_MODEL"] = base_model
     if not os.getenv("LLM_BASE_URL"):
         os.environ["LLM_BASE_URL"] = (
@@ -201,9 +207,13 @@ def main() -> None:
                 "optimize": {
                     "started_at": datetime.now().isoformat(),
                     "steps": [
+                        "telemetry_report" if not args.skip_telemetry_report else "skip_telemetry_report",
+                        "telemetry_brief" if not args.skip_llm_brief else "skip_telemetry_brief",
                         "v2_repair",
                         "wv_v2",
                     ],
+                    "branch_name": args.branch_name,
+                    "source_variant": args.source_variant,
                     "repair": {
                         "enabled": not args.skip_phase2,
                         "max_iterations": args.max_iterations,
@@ -213,7 +223,7 @@ def main() -> None:
                     },
                     "telemetry_brief": {
                         "enabled": not args.skip_llm_brief,
-                        "model": args.llm_brief_model or os.getenv("PIPELINE_MODEL") or None,
+                        "model": args.llm_brief_model or os.getenv("DEEPSEEK_MODEL") or os.getenv("PIPELINE_MODEL") or None,
                         "max_chars": args.llm_brief_max_chars,
                         "max_tokens": args.llm_brief_max_tokens,
                         "max_rounds": args.llm_brief_max_rounds,
@@ -244,7 +254,7 @@ def main() -> None:
     if args.limit and args.limit > 0:
         all_ids = all_ids[: args.limit]
 
-    summary_file = run_dir / "dynamic_repair_batch_summary.json"
+    summary_file = Path(args.summary_file).expanduser().resolve() if args.summary_file else run_dir / "dynamic_repair_batch_summary.json"
     existing_summary = _load_existing_summary(summary_file)
     project_order: List[str] = []
     project_items_by_id: Dict[str, Dict[str, object]] = {}
@@ -260,6 +270,8 @@ def main() -> None:
     summary: Dict[str, object] = {
         "run_dir": str(run_dir),
         "started_at": existing_summary.get("started_at") or datetime.now().isoformat(),
+        "branch_name": args.branch_name,
+        "source_variant": args.source_variant,
         "total_selected": max(int(existing_summary.get("total_selected", 0) or 0), len(all_ids), len(project_order)),
         "projects": [project_items_by_id[project_id] for project_id in project_order],
     }
@@ -285,11 +297,16 @@ def main() -> None:
             print(f"\n{'─'*60}", flush=True)
             print(f"[{idx}/{len(all_ids)}] {pid} — start", flush=True)
             print(f"{'─'*60}", flush=True)
-            paths = build_paths(source_workspace=source_workspace, webvoyager_results=webvoyager_results)
+            paths = build_paths(source_workspace=source_workspace, webvoyager_results=webvoyager_results, branch_name=args.branch_name)
+            if args.branch_name:
+                print(f"[{idx}/{len(all_ids)}] [{pid}] Branch: {args.branch_name} source_variant={args.source_variant}", flush=True)
             print(f"[{idx}/{len(all_ids)}] [{pid}] Phase0: freezing source ...", flush=True)
             item["phase0"] = phase0_freeze_source(paths)
-            print(f"[{idx}/{len(all_ids)}] [{pid}] Phase1: building telemetry report ...", flush=True)
-            item["phase1"] = phase1_build_telemetry_report(paths, debounce_seconds=args.debounce_seconds)
+            if args.skip_telemetry_report:
+                item["phase1"] = {"status": "skipped"}
+            else:
+                print(f"[{idx}/{len(all_ids)}] [{pid}] Phase1: building telemetry report ...", flush=True)
+                item["phase1"] = phase1_build_telemetry_report(paths, debounce_seconds=args.debounce_seconds)
             if args.skip_llm_brief:
                 item["phase1_brief"] = {"status": "skipped"}
             else:
@@ -304,6 +321,10 @@ def main() -> None:
                     retry_backoff_seconds=args.llm_brief_retry_backoff_seconds,
                 )
                 print(f"[{idx}/{len(all_ids)}] [{pid}] Phase1 brief: {item['phase1_brief'].get('status', '?')}", flush=True)
+                if str(item["phase1_brief"].get("status", "")).lower() != "success":
+                    item["phase2"] = {"status": "skipped_phase1_brief_failed"}
+                    item["phase3"] = {"status": "skipped_phase1_brief_failed"}
+                    raise RuntimeError("Phase1 telemetry brief failed; log compression is required before repair")
             if args.skip_phase2:
                 item["phase2"] = {"status": "skipped"}
             else:
@@ -372,6 +393,7 @@ def main() -> None:
                 new_paths = build_paths(
                     source_workspace=_cur_paths.experiment_workspace,
                     webvoyager_results=prev_wv_results,
+                    branch_name=args.branch_name,
                 )
                 # Keep experiment in the SAME directory — just refresh telemetry and re-repair in-place.
                 # This avoids workspace proliferation (_v2_experiment_v2_experiment etc.)
@@ -391,6 +413,10 @@ def main() -> None:
                         retries_per_model=args.llm_brief_retries_per_model,
                         retry_backoff_seconds=args.llm_brief_retry_backoff_seconds,
                     )
+                    if str((item.get(f"phase1_brief{rk}") or {}).get("status", "")).lower() != "success":
+                        item["status"] = "failed"
+                        item["error"] = f"Phase1 telemetry brief failed in repair round {repair_round}"
+                        raise RuntimeError(item["error"])
                 # Phase2: repair using fresh evidence
                 if not args.skip_phase2:
                     item[f"phase2{rk}"] = phase2_openhands_repair(
