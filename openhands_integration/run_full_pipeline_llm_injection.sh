@@ -1,5 +1,5 @@
 #!/bin/bash
-# Full pipeline for projects using LLM-based log injection.
+# Full pipeline for projects using LLM-based log injection + observable repair.
 # Default mode is per-project sequential execution:
 #   000001: v1 generate + inject + WV1 -> v2 repair + WV2 -> report
 #   000002: v1 generate + inject + WV1 -> v2 repair + WV2 -> report
@@ -9,7 +9,7 @@
 #   bash openhands_integration/run_full_pipeline_llm_injection.sh
 #   bash openhands_integration/run_full_pipeline_llm_injection.sh --only-optimize batch_runs/run_YYYYMMDD_XXXXXX
 #   bash openhands_integration/run_full_pipeline_llm_injection.sh --start 000060
-#   bash openhands_integration/run_full_pipeline_llm_injection.sh --start 000001 --end 000003 --model qwen3.5-plus
+#   bash openhands_integration/run_full_pipeline_llm_injection.sh --start 000001 --end 000003
 #   bash openhands_integration/run_full_pipeline_llm_injection.sh --batch-mode
 #
 set -euo pipefail
@@ -27,6 +27,8 @@ START_ID="${START_ID:-000044}"
 END_ID="${END_ID:-000101}"
 ONLY_OPTIMIZE=""
 MODEL_NAME="${MODEL_NAME:-}"
+RAW_LOGS_MODE="false"
+ONLY_REPAIR_MODE="false"
 BATCH_MODE="false"
 REUSE_OPENHANDS_WORKSPACE="true"
 RUN_DIR_OVERRIDE=""
@@ -49,16 +51,20 @@ while [[ $# -gt 0 ]]; do
       MODEL_NAME="$2"
       shift 2
       ;;
-    --batch-mode)
-      BATCH_MODE="true"
-      shift
-      ;;
     --run-dir)
       RUN_DIR_OVERRIDE="$2"
       shift 2
       ;;
     --no-reuse-openhands-workspace)
       REUSE_OPENHANDS_WORKSPACE="false"
+      shift
+      ;;
+    --raw-logs)
+      RAW_LOGS_MODE="true"
+      shift
+      ;;
+    --only-repair)
+      ONLY_REPAIR_MODE="true"
       shift
       ;;
     *)
@@ -68,6 +74,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+LOGGED_SOURCE_VARIANT="llm"
+LOGGED_SOURCE_SUFFIX="LLM"OG_PROMPT="$WORKSPACE/openhands_integration/prompts/no_log_baseline_repair_prompt.txt"
+
 # Logging
 exec > >(tee -a "$PIPELINE_LOG") 2>&1
 echo "=================================================="
@@ -75,6 +84,12 @@ echo "Full Pipeline (LLM Injection): $START_ID -> $END_ID"
 echo "Workspace: $WORKSPACE"
 echo "Log: $PIPELINE_LOG"
 echo "Mode: $( [[ "$BATCH_MODE" == "true" ]] && echo "batch" || echo "per-project sequential" )"
+if [[ "$RAW_LOGS_MODE" == "true" ]]; then
+  echo "Repair mode: raw-logs (no LLM brief, raw telemetry_report.md)"
+fi
+if [[ "$ONLY_REPAIR_MODE" == "true" ]]; then
+  echo "Repair-only mode: skipping Phase 1 (v1 generation + injection + WV1)"
+fi
 if [[ -n "$MODEL_NAME" ]]; then
   echo "Unified model: $MODEL_NAME"
 fi
@@ -136,7 +151,7 @@ generation = str(project.get("generation_status", "")).lower()
 injection = str(project.get("log_injection_status", "")).lower()
 webvoyager = str(project.get("webvoyager_status", "")).lower()
 
-if status == "completed" and generation == "success" and injection == "completed" and webvoyager == "success":
+if status == "completed" and generation == "success" and injection in {"completed", "success", "partial_success"} and webvoyager == "success":
   sys.exit(0)
 
 print(
@@ -151,7 +166,7 @@ PY
 assert_phase2_success() {
   local project_id="$1"
   local run_dir="$2"
-  local result_file="$run_dir/dynamic_repair_batch_summary.json"
+  local result_file="${3:-$run_dir/dynamic_repair_batch_summary.json}"
 
   python3 - "$result_file" "$project_id" <<'PY'
 import json
@@ -226,7 +241,6 @@ run_phase1_for_project() {
     --single "$project_id"
     --run-dir "$run_dir"
     --expected-total "$expected_total"
-    --injection-mode llm
   )
 
   if ((${#MODEL_ARGS[@]})); then
@@ -239,19 +253,29 @@ run_phase1_for_project() {
 
   "${phase1_cmd[@]}" 2>&1 | tee "$phase1_log"
 
-  assert_phase1_success "$project_id" "$run_dir"
+  assert_phase1_success "$project_id" "$run_dir" || return 1
 
   echo "[$project_id] Phase 1 complete. Run dir: $run_dir"
   PHASE1_RUN_DIR="$run_dir"
 }
 
-run_phase2_for_project() {
+run_phase2_logged_for_project() {
   local project_id="$1"
   local run_dir="$2"
-  local phase2_log="$LOG_DIR/phase2_llm_inject_${project_id}_${TIMESTAMP}.log"
+  local summary_file="$run_dir/dynamic_repair_logged_summary.json"
+  local phase2_log="$LOG_DIR/phase2_logged_${project_id}_${TIMESTAMP}.log"
+  local prompt_template="$EVIDENCE_PROMPT"
+  local -a extra_args=()
 
-  echo ""
-  echo "=== [$project_id] Phase 2: OH Repair + WebVoyager v2 + Quality Gate ==="
+  if [[ "$RAW_LOGS_MODE" == "true" ]]; then
+    prompt_template="$RAW_LOGS_PROMPT"
+    extra_args=(--skip-llm-brief)
+    echo ""
+    echo "=== [$project_id] Phase 2A: Raw-Logs OH Repair (no brief) + WebVoyager v2 ==="
+  else
+    echo ""
+    echo "=== [$project_id] Phase 2A: Logged OH Repair + WebVoyager v2 ==="
+  fi
   echo "Run dir: $run_dir"
   echo "Starting at: $(date)"
 
@@ -259,6 +283,45 @@ run_phase2_for_project() {
     --run-dir "$run_dir" \
     --start "$project_id" \
     --end "$project_id" \
+    --source-variant "$LOGGED_SOURCE_VARIANT" \
+    --branch-name logged \
+    --summary-file "$summary_file" \
+    --prompt-template "$prompt_template" \
+    --timeout 5400 \
+    --webvoyager-timeout 1800 \
+    --webvoyager-max-iter 10 \
+    --repair-rounds 1 \
+    "${extra_args[@]}" \
+    "${MODEL_ARGS[@]}" \
+    2>&1 | tee "$phase2_log"
+
+  assert_phase2_success "$project_id" "$run_dir" "$summary_file" || return 1
+
+  echo "[$project_id] Phase 2A logged complete at: $(date)"
+}
+
+run_phase2_no_log_for_project() {
+  local project_id="$1"
+  local run_dir="$2"
+  local summary_file="$run_dir/dynamic_repair_no_log_summary.json"
+  local phase2_log="$LOG_DIR/phase2_no_log_${project_id}_${TIMESTAMP}.log"
+  local prompt_template="$WORKSPACE/openhands_integration/prompts/no_log_baseline_repair_prompt.txt"
+
+  echo ""
+  echo "=== [$project_id] Phase 2B: No-log OH Repair + WebVoyager v2 ==="
+  echo "Run dir: $run_dir"
+  echo "Starting at: $(date)"
+
+  python3 -u openhands_integration/optimize_batch_results.py \
+    --run-dir "$run_dir" \
+    --start "$project_id" \
+    --end "$project_id" \
+    --source-variant clean \
+    --branch-name no_log \
+    --summary-file "$summary_file" \
+    --skip-telemetry-report \
+    --skip-llm-brief \
+    --prompt-template "$prompt_template" \
     --timeout 5400 \
     --webvoyager-timeout 1800 \
     --webvoyager-max-iter 10 \
@@ -266,9 +329,78 @@ run_phase2_for_project() {
     "${MODEL_ARGS[@]}" \
     2>&1 | tee "$phase2_log"
 
-  assert_phase2_success "$project_id" "$run_dir"
+  assert_phase2_success "$project_id" "$run_dir" "$summary_file" || return 1
 
-  echo "[$project_id] Phase 2 complete at: $(date)"
+  echo "[$project_id] Phase 2B no-log complete at: $(date)"
+}
+
+write_baseline_summary_for_project() {
+  local project_id="$1"
+  local run_dir="$2"
+  local out_file="$run_dir/baseline_dual_repair_summary.json"
+
+  python3 - "$run_dir" "$project_id" "$out_file" "$LOGGED_SOURCE_SUFFIX" "$LOGGED_SOURCE_VARIANT" <<'PY'
+import json
+import pathlib
+import sys
+
+run_dir = pathlib.Path(sys.argv[1])
+project_id = sys.argv[2]
+out_file = pathlib.Path(sys.argv[3])
+logged_source_suffix = sys.argv[4]
+logged_source_variant = sys.argv[5]
+
+def load_json(path):
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+def first_project(payload):
+    projects = payload.get("projects") or []
+    return projects[0] if projects else {}
+
+batch = load_json(run_dir / "batch_results.json")
+logged_summary = load_json(run_dir / "dynamic_repair_logged_summary.json")
+no_log_summary = load_json(run_dir / "dynamic_repair_no_log_summary.json")
+logged = first_project(logged_summary)
+no_log = first_project(no_log_summary)
+
+gen_dir = run_dir / f"gen_{project_id}"
+payload = {
+    "project_id": project_id,
+    "run_dir": str(run_dir),
+    "v1": {
+        "clean_source": str(gen_dir / f"project_{project_id}"),
+      "logged_source": str(gen_dir / f"project_{project_id}_{logged_source_suffix}"),
+      "logged_source_variant": logged_source_variant,
+        "webvoyager_results": str(run_dir / "webvoyager_results" / project_id),
+        "batch_result": first_project(batch),
+    },
+    "repairs": {
+        "logged": {
+            "summary_file": str(run_dir / "dynamic_repair_logged_summary.json"),
+            "source_workspace": logged.get("source_workspace"),
+            "experiment_workspace": logged.get("experiment_workspace"),
+            "phase1_brief": logged.get("phase1_brief"),
+            "phase2": logged.get("phase2"),
+            "phase3": logged.get("phase3"),
+            "quality_gate": logged.get("quality_gate"),
+        },
+        "no_log": {
+            "summary_file": str(run_dir / "dynamic_repair_no_log_summary.json"),
+            "source_workspace": no_log.get("source_workspace"),
+            "experiment_workspace": no_log.get("experiment_workspace"),
+            "phase1": no_log.get("phase1"),
+            "phase1_brief": no_log.get("phase1_brief"),
+            "phase2": no_log.get("phase2"),
+            "phase3": no_log.get("phase3"),
+            "quality_gate": no_log.get("quality_gate"),
+        },
+    },
+}
+out_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+print(out_file)
+PY
 }
 
 generate_report_for_project() {
@@ -300,6 +432,7 @@ if [[ -n "$ONLY_OPTIMIZE" ]]; then
     --run-dir "$RUN_DIR" \
     --start "$START_ID" \
     --end "$END_ID" \
+    --source-variant "$LOGGED_SOURCE_VARIANT" \
     --timeout 5400 \
     --webvoyager-timeout 1800 \
     --webvoyager-max-iter 10 \
@@ -330,8 +463,6 @@ elif [[ "$BATCH_MODE" == "true" ]]; then
   python3 -u openhands_integration/run_batch.py \
     --start "$START_ID" \
     --end "$END_ID" \
-    --injection-mode llm \
-    "${MODEL_ARGS[@]}" \
     "${RUN_BATCH_ARGS[@]}" \
     2>&1 | tee "$PHASE1_LOG"
 
@@ -354,6 +485,7 @@ elif [[ "$BATCH_MODE" == "true" ]]; then
     --run-dir "$RUN_DIR" \
     --start "$START_ID" \
     --end "$END_ID" \
+    --source-variant "$LOGGED_SOURCE_VARIANT" \
     --timeout 5400 \
     --webvoyager-timeout 1800 \
     --webvoyager-max-iter 10 \
@@ -383,20 +515,40 @@ else
   mkdir -p "$RUN_DIR"
   MANIFEST_PATH="$LOG_DIR/per_project_runs_${TIMESTAMP}.txt"
   : > "$MANIFEST_PATH"
+  HAD_FAILURE=0
 
   for current_dec in $(seq "$START_DEC" "$END_DEC"); do
     PROJECT_ID="$(printf '%06d' "$current_dec")"
-    if ! run_phase1_for_project "$PROJECT_ID" "$RUN_DIR" "$TOTAL_PROJECTS"; then
-      echo "[$PROJECT_ID] Phase 1 failed; skipping remaining stages for this project and continuing."
-      printf '%s\t%s\t%s\n' "$PROJECT_ID" "$RUN_DIR" "phase1_failed" >> "$MANIFEST_PATH"
+
+    if [[ "$ONLY_REPAIR_MODE" != "true" ]]; then
+      if ! run_phase1_for_project "$PROJECT_ID" "$RUN_DIR" "$TOTAL_PROJECTS"; then
+        echo "[$PROJECT_ID] Phase 1 failed; skipping remaining stages for this project and continuing."
+        printf '%s\t%s\t%s\n' "$PROJECT_ID" "$RUN_DIR" "phase1_failed" >> "$MANIFEST_PATH"
+        HAD_FAILURE=1
+        continue
+      fi
+    else
+      echo "[$PROJECT_ID] Only-repair mode: skipping Phase 1"
+    fi
+
+    if ! run_phase2_logged_for_project "$PROJECT_ID" "$RUN_DIR"; then
+      echo "[$PROJECT_ID] Phase 2A logged failed; skipping remaining stages for this project and continuing."
+      printf '%s\t%s\t%s\n' "$PROJECT_ID" "$RUN_DIR" "phase2_logged_failed" >> "$MANIFEST_PATH"
+      HAD_FAILURE=1
       continue
     fi
-    if ! run_phase2_for_project "$PROJECT_ID" "$RUN_DIR"; then
-      echo "[$PROJECT_ID] Phase 2 failed; skipping report generation for this project and continuing."
-      printf '%s\t%s\t%s\n' "$PROJECT_ID" "$RUN_DIR" "phase2_failed" >> "$MANIFEST_PATH"
-      continue
+
+    if [[ "$ONLY_REPAIR_MODE" != "true" ]]; then
+      if ! run_phase2_no_log_for_project "$PROJECT_ID" "$RUN_DIR"; then
+        echo "[$PROJECT_ID] Phase 2B no-log failed; skipping summary for this project and continuing."
+        printf '%s\t%s\t%s\n' "$PROJECT_ID" "$RUN_DIR" "phase2_no_log_failed" >> "$MANIFEST_PATH"
+        HAD_FAILURE=1
+        continue
+      fi
+      echo "[$PROJECT_ID] Baseline summary: $(write_baseline_summary_for_project "$PROJECT_ID" "$RUN_DIR")"
+    else
+      echo "[$PROJECT_ID] Only-repair mode: skipping Phase 2B (no-log) and summary"
     fi
-    generate_report_for_project "$PROJECT_ID" "$RUN_DIR"
     printf '%s\t%s\t%s\n' "$PROJECT_ID" "$RUN_DIR" "completed" >> "$MANIFEST_PATH"
   done
 
@@ -418,3 +570,9 @@ if [[ -n "${MANIFEST_PATH:-}" ]]; then
 fi
 echo "Full log:   $PIPELINE_LOG"
 echo "=================================================="
+
+FINAL_STATUS=0
+if [[ "${HAD_FAILURE:-0}" == "1" ]] || { [[ -n "${MANIFEST_PATH:-}" && -f "$MANIFEST_PATH" ]] && grep -qE $'\tphase(1|2_logged|2_no_log)_failed$' "$MANIFEST_PATH"; }; then
+  FINAL_STATUS=1
+fi
+exit "$FINAL_STATUS"

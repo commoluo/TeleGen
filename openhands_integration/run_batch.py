@@ -42,7 +42,7 @@ from datetime import datetime
 from contextlib import contextmanager
 from dotenv import load_dotenv
 from experiment_metadata import update_run_metadata
-from model_config import apply_unified_model, normalize_model_name
+from model_config import apply_unified_model, normalize_model_name, to_deepseek_model
 from webvoyager_eval import evaluate_task_dir
 
 
@@ -58,9 +58,9 @@ else:
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Load .env
-env_path = Path(__file__).parent.parent / "alternative_generation" / ".env"
+env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
-    load_dotenv(env_path)
+    load_dotenv(env_path, override=False)
 
 
 # ============================================================================
@@ -316,7 +316,7 @@ def _materialize_missing_local_data_modules(source_file: Path):
 @contextmanager
 def exclusive_web_stack_lock():
     """Serialize local app startup and WebVoyager runs across launchers."""
-    lock_path = Path(os.getenv("PIPELINE_WEB_STACK_LOCK", "/tmp/fullstack_web_stack.lock"))
+    lock_path = Path(os.getenv("PIPELINE_WEB_STACK_LOCK", "/tmp/telegen_web_stack.lock"))
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w", encoding="utf-8") as lock_file:
         print(f"    Waiting for Web stack lock: {lock_path}")
@@ -701,26 +701,6 @@ def _has_semantic_log_markers(project_dir: Path) -> bool:
     return False
 
 
-def _parse_ast_injector_stdout(stdout_text: str):
-    """Parse numeric summary from ast_injector output."""
-    metrics = {}
-    patterns = {
-        "files_modified": r"\[INFO\]\s+Files modified:\s*(\d+)",
-        "files_skipped": r"\[INFO\]\s+Files skipped:\s*(\d+)",
-        "interaction_injected": r"\[INFO\]\s+Interaction logs injected:\s*(\d+)",
-        "network_request_injected": r"\[INFO\]\s+Network request logs injected:\s*(\d+)",
-        "network_response_injected": r"\[INFO\]\s+Network response logs injected:\s*(\d+)",
-        "arrow_wrapped": r"\[INFO\]\s+Arrow functions block-wrapped:\s*(\d+)",
-    }
-
-    for key, pat in patterns.items():
-        m = re.search(pat, stdout_text or "")
-        if m:
-            metrics[key] = int(m.group(1))
-
-    return metrics
-
-
 def run_llm_log_injection(project_dir: Path, base_dir: Path, project_id: Optional[str] = None, test_spec_file: Optional[str] = None):
     """Run LLM-based semantic log injection for a single project."""
     # Clear proxy env vars that interfere with API calls
@@ -742,68 +722,16 @@ def run_llm_log_injection(project_dir: Path, base_dir: Path, project_id: Optiona
     return result
 
 
-def run_ast_log_injection(project_dir: Path, base_dir: Path, timeout=300):
-    """Run deterministic AST-based telemetry injection script for a single project."""
-    script_path = base_dir / "openhands_integration" / "ast_injector.js"
-    if not script_path.exists():
-        return {
-            "status": "ast_script_missing",
-            "script": str(script_path),
-            "project_dir": str(project_dir),
-        }
-
-    # Reuse mode may provide a symlinked project path; resolve to real path so glob scanning works.
-    target_project_dir = project_dir.resolve() if project_dir.exists() else project_dir
-    cmd = ["node", str(script_path), str(target_project_dir)]
-
-    # Run from the script's own directory so Node resolves node_modules correctly.
-    script_cwd = str(script_path.parent)
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=script_cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "status": "ast_injection_timeout",
-            "script": str(script_path),
-            "project_dir": str(project_dir),
-            "timeout_seconds": timeout,
-        }
-    except Exception as e:
-        return {
-            "status": "ast_injection_runner_error",
-            "error": str(e),
-            "script": str(script_path),
-            "project_dir": str(project_dir),
-        }
-
-    metrics = _parse_ast_injector_stdout(result.stdout or "")
-    report = {
-        "status": "success" if result.returncode == 0 else "failed",
-        "script": str(script_path),
-        "project_dir": str(project_dir),
-        "project_dir_resolved": str(target_project_dir),
-        "returncode": result.returncode,
-        "stdout": result.stdout or "",
-        "stderr": result.stderr or "",
-    }
-    report.update(metrics)
-    return report
-
-
-def _prepare_ast_variant_project(source_project_dir: Path, ast_project_dir: Path, reuse_openhands_workspace: bool):
+def _prepare_llm_variant_project(source_project_dir: Path, llm_project_dir: Path):
     if not source_project_dir.exists():
         return None
+    # The LLM injector edits files in place, so always copy. This preserves the clean v1 source.
     _prepare_output_project(
         source_project_dir,
-        ast_project_dir,
-        reuse_openhands_workspace=reuse_openhands_workspace,
+        llm_project_dir,
+        reuse_openhands_workspace=False,
     )
-    return ast_project_dir
+    return llm_project_dir
 
 
 def _detect_backend_autotermination_pattern(backend_dir: Path):
@@ -1117,17 +1045,10 @@ def _to_text(value):
 # Main Pipeline
 # ============================================================================
 
-def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False, prep_in_openhands=True, reuse_openhands_workspace=True, injection_mode="openhands", model=None, run_dir=None, expected_total=None):
-    """Run batch pipeline.
-
-    injection_mode:
-        'openhands' - OpenHands generates code with [TRACE]/[DATA] markers (default)
-        'ast'       - Generate clean code, then apply AST-based log injection
-        'llm'       - Generate clean code, then apply LLM-based log injection
-    """
-    # Derive prep_in_openhands from injection_mode when explicitly set
-    if injection_mode in ("ast", "llm"):
-        prep_in_openhands = False
+def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False, prep_in_openhands=True, reuse_openhands_workspace=True, model=None, run_dir=None, expected_total=None):
+    """Run batch pipeline with LLM-based telemetry injection and OpenHands generation."""
+    # LLM injection always generates clean code first, then injects telemetry
+    prep_in_openhands = False
 
     # Setup paths
     base_dir = Path(__file__).parent.parent
@@ -1142,7 +1063,6 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
     print(f"Start ID: {start_id}")
     print(f"End ID: {end_id}")
     print(f"Single ID: {single_id}")
-    print(f"Injection mode: {injection_mode}")
     print(f"Prep in OpenHands (Scheme B): {prep_in_openhands}")
     print(f"Reuse OpenHands workspace: {reuse_openhands_workspace}")
     if normalize_model_name(model):
@@ -1174,11 +1094,10 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
                     "started_at": datetime.now().isoformat(),
                     "steps": [
                         "v1_generation",
-                        "llm_log_injection" if injection_mode == "llm" else "ast_log_injection" if injection_mode == "ast" else "openhands_log_prep",
+                        "llm_log_injection",
                         "wv_v1",
                     ],
                     "settings": {
-                        "log_injection_mode": injection_mode,
                         "prep_in_openhands": prep_in_openhands,
                         "reuse_openhands_workspace": reuse_openhands_workspace,
                         "openhands_generation_max_iterations": None,
@@ -1253,38 +1172,9 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
             gen_workspace = None
 
             clean_project_dir = project_dir / f"project_{project_id}"
-            ast_project_dir = project_dir / f"project_{project_id}_AST"
+            llm_project_dir = project_dir / f"project_{project_id}_LLM"
             output_project_dir = clean_project_dir
             skip_generation = False
-
-            if injection_mode == "ast" and clean_project_dir.exists():
-                skip_generation = True
-                print(f"    Reusing existing v1 workspace: {clean_project_dir}")
-
-                prepared_ast_dir = _prepare_ast_variant_project(
-                    clean_project_dir,
-                    ast_project_dir,
-                    reuse_openhands_workspace=reuse_openhands_workspace,
-                )
-                if prepared_ast_dir is None:
-                    raise FileNotFoundError(f"AST source workspace missing: {clean_project_dir}")
-
-                output_project_dir = prepared_ast_dir
-                project_result["generation_status"] = "success"
-                project_result["openhands_metrics_status"] = "reused_v1"
-                with open(project_dir / "generation_report.json", 'w') as f:
-                    json.dump({
-                        "project_id": project_id,
-                        "status": "success",
-                        "workspace": None,
-                        "output": str(output_project_dir),
-                        "source": str(clean_project_dir),
-                        "output_mode": "ast_variant_reuse",
-                        "timestamp": datetime.now().isoformat(),
-                        "openhands_metrics": None,
-                        "generation_timed_out": False,
-                        "generation_reused_existing_v1": True,
-                    }, f, indent=2)
 
             if not skip_generation:
                 gen_workspace = base_dir / "openhands_workspace" / f"gen_{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -1325,14 +1215,21 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
                 ]
 
                 env = dict(os.environ)
-                # OpenHands LLM config: prefer QWEN, then DEEPSEEK
-                oh_api_key = os.getenv("QWEN_API_KEY") or os.getenv("WEBVOYAGER_API_KEY")
-                if oh_api_key:
-                    env["LLM_API_KEY"] = oh_api_key
-                    env["LLM_MODEL"] = f"openai/{os.getenv('QWEN_MODEL', 'qwen3.5-plus')}"
-                    env["LLM_PROVIDER"] = "openai"
-                    env["LLM_BASE_URL"] = os.getenv("QWEN_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                # OpenHands generation is text-only: prefer DeepSeek, keep Qwen for WebVoyager.
+                if os.getenv("DEEPSEEK_API_KEY"):
+                    env["LLM_API_KEY"] = os.getenv("DEEPSEEK_API_KEY", "")
+                    env["LLM_MODEL"] = to_deepseek_model(os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"))
+                    env["LLM_PROVIDER"] = "deepseek"
+                    env["LLM_BASE_URL"] = os.getenv("DEEPSEEK_API_BASE_URL") or "https://api.deepseek.com"
                     env["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
+                else:
+                    oh_api_key = os.getenv("QWEN_API_KEY") or os.getenv("WEBVOYAGER_API_KEY")
+                    if oh_api_key:
+                        env["LLM_API_KEY"] = oh_api_key
+                        env["LLM_MODEL"] = f"openai/{os.getenv('QWEN_MODEL', 'qwen3.5-plus')}"
+                        env["LLM_PROVIDER"] = "openai"
+                        env["LLM_BASE_URL"] = os.getenv("QWEN_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                        env["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
                 env["TTY_INTERACTIVE"] = "1"
 
                 generation_timed_out = False
@@ -1462,82 +1359,52 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
                         "generation_timed_out": generation_timed_out,
                     }, f, indent=2)
 
-            if injection_mode == "ast" and not skip_generation:
-                prepared_ast_dir = _prepare_ast_variant_project(
-                    clean_project_dir,
-                    ast_project_dir,
-                    reuse_openhands_workspace=False,
-                )
-                if prepared_ast_dir is None:
-                    raise FileNotFoundError(f"Failed to prepare AST workspace from {clean_project_dir}")
-                output_project_dir = prepared_ast_dir
-                print(f"    Prepared AST variant workspace: {output_project_dir.name}")
-                with open(project_dir / "generation_report.json", 'r+', encoding='utf-8') as f:
+            # Prepare LLM variant workspace for telemetry injection
+            prepared_llm_dir = _prepare_llm_variant_project(
+                clean_project_dir,
+                llm_project_dir,
+            )
+            if prepared_llm_dir is None:
+                raise FileNotFoundError(f"Failed to prepare LLM workspace from {clean_project_dir}")
+            output_project_dir = prepared_llm_dir
+            print(f"    Prepared LLM log variant workspace: {output_project_dir.name}")
+            with open(project_dir / "generation_report.json", 'r+', encoding='utf-8') as f:
                     payload = json.load(f)
                     payload["output"] = str(output_project_dir)
                     payload["source"] = str(clean_project_dir)
-                    payload["output_mode"] = "ast_variant_copy"
+                    payload["output_mode"] = "llm_variant_copy"
+                    payload["preserved_clean_output"] = str(clean_project_dir)
+                    payload["preserved_logged_output"] = str(output_project_dir)
                     f.seek(0)
                     json.dump(payload, f, indent=2)
                     f.truncate()
 
             # ================================================================
-            # Step 2: Log Injection
+            # Step 2: Log Injection (LLM-based)
             # ================================================================
             print(f"\n[Step 2] Telemetry Injection...")
             current_step = "log_injection"
 
             if output_project_dir.exists():
-                if prep_in_openhands:
-                    prep_report_file = output_project_dir / "openhands_prep_report.json"
-                    prep_report = {}
-                    if prep_report_file.exists():
-                        try:
-                            prep_report = json.loads(prep_report_file.read_text(encoding="utf-8"))
-                        except Exception:
-                            prep_report = {"parse_error": True}
+                print(f"    LLM-based log injection...")
+                log_result = run_llm_log_injection(output_project_dir, base_dir, project_id=project_id)
+                project_result["log_injection_status"] = log_result.get("status", "unknown")
+                print(f"    LLM injection: {log_result.get('status', 'unknown')}")
+                print(f"    Files modified: {log_result.get('files_modified', 0)}")
+                print(f"    Files with patch: {log_result.get('files_with_patch', 0)}")
+                print(f"    Errors: {len(log_result.get('errors', []))}")
 
-                    has_markers = _has_semantic_log_markers(output_project_dir)
-                    if prep_report_file.exists() and has_markers:
-                        status = "prepared_in_openhands"
-                    elif prep_report_file.exists() and not has_markers:
-                        status = "prep_report_found_but_logs_missing"
-                    else:
-                        status = "prep_report_missing"
+                with open(project_dir / "log_injection_report.json", 'w') as f:
+                    json.dump(log_result, f, indent=2)
 
-                    project_result["log_injection_status"] = status
-                    log_result = {
-                        "status": status,
-                        "prep_in_openhands": True,
-                        "prep_report_exists": prep_report_file.exists(),
-                        "semantic_log_markers_found": has_markers,
-                        "prep_report": prep_report,
-                    }
-                    print(f"    Container prep verification: {status}")
-                    with open(project_dir / "log_injection_report.json", 'w') as f:
-                        json.dump(log_result, f, indent=2)
-                elif injection_mode == "llm":
-                    print(f"    LLM-based log injection...")
-                    log_result = run_llm_log_injection(output_project_dir, base_dir, project_id=project_id)
-                    project_result["log_injection_status"] = log_result.get("status", "unknown")
-                    print(f"    LLM injection: {log_result.get('status', 'unknown')}")
-                    print(f"    Files modified: {log_result.get('files_modified', 0)}")
-                    print(f"    Files with patch: {log_result.get('files_with_patch', 0)}")
-                    print(f"    Errors: {len(log_result.get('errors', []))}")
-
-                    with open(project_dir / "log_injection_report.json", 'w') as f:
-                        json.dump(log_result, f, indent=2)
-                else:
-                    log_result = run_ast_log_injection(output_project_dir, base_dir)
-                    project_result["log_injection_status"] = log_result.get("status", "unknown")
-                    print(f"    AST injection: {log_result.get('status', 'unknown')}")
-                    print(f"    Files modified: {log_result.get('files_modified', 0)}")
-                    print(f"    Interaction logs: {log_result.get('interaction_injected', 0)}")
-                    print(f"    Network request logs: {log_result.get('network_request_injected', 0)}")
-                    print(f"    Network response logs: {log_result.get('network_response_injected', 0)}")
-
-                    with open(project_dir / "log_injection_report.json", 'w') as f:
-                        json.dump(log_result, f, indent=2)
+                if project_result["log_injection_status"] not in {"completed", "partial_success"}:
+                    print("    LLM injection failed; skipping WebVoyager because telemetry injection is required")
+                    project_result["status"] = "failed"
+                    project_result["webvoyager_status"] = "skipped_log_injection_failed"
+                    results["failed"] += 1
+                    results["projects"].append(project_result)
+                    _persist_batch_results(batch_run_dir, results)
+                    continue
             else:
                 project_result["log_injection_status"] = "skipped"
                 print(f"    Skipped - no project directory")
@@ -1791,7 +1658,7 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
 
                         # WebVoyager API config: prefer WEBVOYAGER_*, fallback to QWEN_*
                         api_key = (os.getenv("WEBVOYAGER_API_KEY") or os.getenv("QWEN_API_KEY") or "").strip()
-                        api_model = os.getenv("WEBVOYAGER_MODEL", "qwen-vl-max")
+                        api_model = os.getenv("WEBVOYAGER_MODEL", "qwen3.5-plus")
                         api_base = os.getenv("WEBVOYAGER_API_BASE_URL") or os.getenv("QWEN_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
                         if not api_key:
@@ -1988,7 +1855,7 @@ if __name__ == "__main__":
         "--no-prep-in-openhands",
         action="store_false",
         dest="prep_in_openhands",
-        help="Disable Scheme B and use host-side AST injection flow",
+        help="Disable Scheme B and use host-side LLM injection flow",
     )
     parser.add_argument(
         "--reuse-openhands-workspace",
@@ -2001,12 +1868,6 @@ if __name__ == "__main__":
         action="store_false",
         dest="reuse_openhands_workspace",
         help="Disable workspace reuse and always copy generated projects",
-    )
-    parser.add_argument(
-        "--injection-mode",
-        choices=["openhands", "ast", "llm"],
-        default="openhands",
-        help="Log injection strategy: openhands (default, in-prompt), ast (AST post-process), llm (LLM post-process)",
     )
     parser.add_argument("--model", default=None, help="Use one explicit model for all LLM calls in this batch run")
     parser.add_argument("--run-dir", default=None, help="Write outputs into an existing batch_runs/run_xxx directory")
@@ -2024,7 +1885,6 @@ if __name__ == "__main__":
         skip_webvoyager=args.skip_webvoyager,
         prep_in_openhands=args.prep_in_openhands,
         reuse_openhands_workspace=args.reuse_openhands_workspace,
-        injection_mode=args.injection_mode,
         model=args.model,
         run_dir=args.run_dir,
         expected_total=args.expected_total,

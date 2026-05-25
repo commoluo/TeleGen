@@ -20,6 +20,27 @@ def to_openhands_model(model: Optional[str]) -> str:
     return f"openai/{normalized}"
 
 
+def to_deepseek_model(model: Optional[str]) -> str:
+    normalized = normalize_model_name(model)
+    if not normalized:
+        return ""
+    if "/" in normalized:
+        return normalized
+    return f"deepseek/{normalized}"
+
+
+def to_direct_api_model(model: Optional[str]) -> str:
+    normalized = normalize_model_name(model)
+    if not normalized:
+        return ""
+    provider_prefixes = {"deepseek", "openai", "qwen"}
+    if "/" in normalized:
+        provider, raw_model = normalized.split("/", 1)
+        if provider in provider_prefixes and raw_model:
+            return raw_model
+    return normalized
+
+
 def infer_provider(model: Optional[str]) -> str:
     normalized = normalize_model_name(model)
     if not normalized:
@@ -30,12 +51,11 @@ def infer_provider(model: Optional[str]) -> str:
 
 
 def apply_unified_model(model: Optional[str], environ: Optional[MutableMapping[str, str]] = None) -> MutableMapping[str, str]:
-    """Apply one raw model name across all pipeline consumers.
+    """Apply one raw text model without changing WebVoyager's Qwen routing.
 
     Raw model name examples:
-    - qwen3.5-plus
-    - qwen-vl-max
-    - openai/gpt-4o
+    - deepseek-v4-flash
+    - deepseek/deepseek-v4-flash
     """
     target = environ if environ is not None else os.environ
     normalized = normalize_model_name(model)
@@ -45,9 +65,10 @@ def apply_unified_model(model: Optional[str], environ: Optional[MutableMapping[s
     target["PIPELINE_MODEL"] = normalized
     target["UNIFIED_MODEL"] = normalized
     target["DEFAULT_MODEL"] = normalized
-    target["QWEN_MODEL"] = normalized
-    target["WEBVOYAGER_MODEL"] = normalized
-    target["WEBVOYAGER_EVAL_MODEL"] = normalized
-    target["LLM_MODEL"] = to_openhands_model(normalized)
-    target.setdefault("LLM_PROVIDER", infer_provider(normalized))
+    target["DEEPSEEK_MODEL"] = normalized.split("/", 1)[1] if normalized.startswith("deepseek/") else normalized
+    target["LLM_MODEL"] = to_deepseek_model(normalized)
+    target["LLM_PROVIDER"] = "deepseek"
+    target.setdefault("WEBVOYAGER_MODEL", "qwen3.5-plus")
+    target.setdefault("WEBVOYAGER_EVAL_MODEL", "qwen3.5-plus")
+    target.setdefault("QWEN_MODEL", "qwen3.5-plus")
     return target

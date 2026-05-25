@@ -56,13 +56,10 @@ def _run_one(args_tuple: Tuple) -> Dict:
     # Reload env inside child process (env is copied from parent but dotenv
     # files are not auto-sourced in forked processes on some platforms).
     workspace_root = Path(run_dir_str).parent.parent if "batch_runs" in run_dir_str else Path(run_dir_str).parent
-    # Try a few candidate locations for .env
-    for dotenv_path in [
-        workspace_root / ".env",
-        workspace_root / "alternative_generation" / ".env",
-    ]:
-        if dotenv_path.exists():
-            load_dotenv(dotenv_path, override=False)
+    # Load .env from workspace root
+    dotenv_path = workspace_root / ".env"
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path, override=False)
 
     try:
         result = phase3_webvoyager_test(
@@ -132,7 +129,6 @@ def main() -> None:
     # Load credentials in the main process (children inherit env).
     workspace_root = Path(__file__).resolve().parent.parent
     load_dotenv(workspace_root / ".env")
-    load_dotenv(workspace_root / "alternative_generation" / ".env")
 
     run_dir = Path(args.run_dir).resolve()
     if not run_dir.exists():

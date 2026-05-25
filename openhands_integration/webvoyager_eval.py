@@ -157,7 +157,7 @@ def _build_client() -> Tuple[OpenAI, str, int]:
             "Missing evaluator API key. Set WEBVOYAGER_EVAL_API_KEY, OPENAI_API_KEY, WEBVOYAGER_API_KEY, or QWEN_API_KEY."
         )
 
-    model = normalize_model_name(os.getenv("WEBVOYAGER_EVAL_MODEL") or os.getenv("PIPELINE_MODEL") or "qwen-vl-max")
+    model = normalize_model_name(os.getenv("WEBVOYAGER_EVAL_MODEL") or "qwen3.5-plus")
     max_images = int(os.getenv("WEBVOYAGER_EVAL_MAX_ATTACHED_IMGS", "15"))
 
     client_kwargs: Dict[str, Any] = {"api_key": api_key}

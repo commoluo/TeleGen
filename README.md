@@ -1,403 +1,162 @@
-# WebGen-Bench
+# TeleGen: Observable Repair for LLM-Generated Web Applications
 
-This repository contains the code for reproducing the paper [WebGen-Bench: Evaluating LLMs on Generating Interactive and Functional Websites from Scratch](https://arxiv.org/abs/2505.03733).
+TeleGen is an observability-enhanced framework for improving LLM-generated web applications by collecting runtime telemetry during task execution and using it to guide code repair.
 
-WebGen-Bench is a comprehensive benchmark for evaluating Large Language Models (LLMs) on their ability to generate interactive and functional websites from natural language instructions. This benchmark includes both automated testing frameworks and a specialized dataset for training and evaluation.
+## Overview
 
-The dataset is also at 🤗 [luzimu/WebGen-Bench](https://huggingface.co/datasets/luzimu/WebGen-Bench) and on [WebGen-Bench (Kaggle)](https://www.kaggle.com/datasets/zimulu/webgen-bench). But for the running of this repo, you do not need to download the data from these sources, as the data is already placed under the `data` directory.
+LLM-generated web applications often look plausible but fail interactive workflows because of hidden issues such as broken navigation, missing event handlers, frontend-backend contract mismatches, runtime errors, or state updates that are not reflected in the UI. Standard task feedback only reports whether a task passed or failed, but often does not explain what happened during execution. TeleGen addresses this by making the generated application observable before repair.
 
-## Project Overview
+TeleGen augments existing web code-generation pipelines with a runtime telemetry loop: after an initial application is generated, TeleGen instruments a separate copy of the application, re-runs the task executor, collects runtime telemetry, compresses the raw logs into a telemetry brief, and provides this brief to a repair agent.
 
-WebGen-Bench provides a complete ecosystem for:
-- **Evaluating LLMs** on website generation tasks using multiple platforms (Bolt.diy, OpenHands, Aider)
-- **Training specialized models** (WebGen-LM series) for web development
-- **Automated UI testing** using WebVoyager agent with visual understanding
-- **Appearance scoring** using vision-language models
-- **Data processing** and decontamination for training
+## Pipeline
 
-|Data | HF Links |
+1. **Initial Generation**: A coding agent generates a v1 web application from a website specification and UI task suite. TeleGen augments existing generation pipelines rather than replacing their original generation or execution protocols.
+2. **Runtime Telemetry Collection**: TeleGen creates an instrumented copy of the v1 application while preserving the clean v1 source code for repair. An LLM-based coding agent inserts lightweight telemetry logs at locations likely to help diagnose task failures. The instrumentation step is only for observation; it should not change the application behavior or perform repair. The task executor re-runs the same tasks on the instrumented application, collecting runtime telemetry such as user actions, network behavior, errors, and state changes.
+3. **Telemetry Brief Construction**: Raw telemetry logs can be long, noisy, and repetitive. TeleGen uses a compression agent to combine task context with the collected logs and produce a compact telemetry brief. The telemetry brief is not a full execution transcript — it is a repair-oriented summary of what happened during task execution.
+4. **Telemetry-Guided Repair**: The repair agent receives clean v1 source code, task feedback, and the telemetry brief. The repair agent edits the clean v1 source code (not the instrumented copy), producing a revised v2 application.
+5. **Re-evaluation**: The task executor re-runs the same task suite on the v2 application. The final result measures whether runtime telemetry helps the repaired application better satisfy the intended workflows.
+
+## What TeleGen Collects
+
+TeleGen collects runtime signals such as user actions, network requests and responses, runtime errors, state changes, and task-relevant execution traces. These signals help the repair agent distinguish failures that look similar from final task outcomes alone.
+
+## Why Separate Instrumentation and Repair?
+
+TeleGen instruments a separate copy of the v1 application and preserves the clean v1 source code for repair. This separation ensures that telemetry collection is used only for observation, while functional changes are made only during the repair stage.
+
+## Architecture
+
+```
+launch_multi_docker.py          ← Entry point: launches Docker containers
+    └── run_project_worker.sh   ← Worker entrypoint inside container
+        └── run_full_pipeline_llm_injection.sh  ← Main orchestration
+            ├── Phase 1: run_batch.py
+            │   ├── 1a. OpenHands code generation (DeepSeek-V4)
+            │   ├── 1b. LLM telemetry injection
+            │   └── 1c. WebVoyager v1 test + log collection
+            ├── Phase 2: optimize_batch_results.py
+            │   ├── 2a. Telemetry brief compression (LLM)
+            │   ├── 2b. OpenHands observable repair
+            │   └── 2c. WebVoyager v2 test + quality gate
+            └── Phase 3: WebVoyager auto-evaluation (Qwen3.5-Plus)
+```
+
+## Core Modules
+
+| File | Role |
 |---|---|
-|WebGen-Bench | 🤗 [luzimu/WebGen-Bench](https://huggingface.co/datasets/luzimu/WebGen-Bench) |
-|WebGen-Bench_train_data | 🤗 [luzimu/WebGen-Bench_train_data](https://huggingface.co/datasets/luzimu/WebGen-Bench_train_data) |
+| `launch_multi_docker.py` | Multi-Docker container parallel launcher |
+| `run_project_worker.sh` | Container worker entrypoint |
+| `run_full_pipeline_llm_injection.sh` | Full pipeline orchestration |
+| `run_batch.py` | Phase 1: generation + injection + WV1 test |
+| `optimize_batch_results.py` | Phase 2: brief + repair + WV2 + quality gate |
+| `dynamic_repair_pipeline.py` | Core pipeline library (Phase 0-3 steps) |
+| `llm_log_injector.py` | LLM telemetry injector (DeepSeek API) |
+| `llm_telemetry_extractor.py` | LLM log analysis & compression |
+| `telemetry_sanitizer.py` | Log sanitization & Markdown report |
+| `webvoyager_eval.py` | WebVoyager task auto-evaluation |
+| `run_phase3_parallel.py` | Phase 3 parallel executor |
+| `model_config.py` | Model config & routing |
+| `experiment_metadata.py` | Experiment metadata |
 
-The **model weights** can be downloaded from:
+## Prompt Templates
 
-|Models | HF Links |
+| File | Use |
 |---|---|
-|WebGen-LM-7B | 🤗 [luzimu/WebGen-LM-7B](https://huggingface.co/luzimu/WebGen-LM-7B) |
-|WebGen-LM-14B | 🤗 [luzimu/WebGen-LM-14B](https://huggingface.co/luzimu/WebGen-LM-14B) |
-|WebGen-LM-32B | 🤗 [luzimu/WebGen-LM-32B](https://huggingface.co/luzimu/WebGen-LM-32B) |
+| `prompts/evidence_based_optimization_prompt.txt` | Observable repair (with telemetry brief) |
+| `prompts/no_log_baseline_repair_prompt.txt` | No-telemetry baseline repair |
+| `prompts/raw_logs_repair_prompt.txt` | Raw-log repair (ablation) |
 
-(The code under `src` was executed on a Windows 11 system. It should also run on Linux with minor adjustments. The code under `src-remote` was executed on a Linux server. This README often uses `deepseek/deepseek-chat-v3-0324:free` as an example. You can replace it with other models.)
+## Quick Start
 
-The experiment outputs are placed under `outputs.zip`. It includes the output of the LLM-based agents that were tested in the paper. 
+### 1. Setup
 
-If you wish to deploy Qwen2.5-VL-32B-Instruct yourself for UI agent testing, or you wish to reproduce the training of WebGen-LM, you can download the necessary models using `src-remote\download\download.py`.
-
-## Project Structure
-
-### Core Directories
-
-#### `/data/` - Benchmark Dataset
-- `test.jsonl` - Test dataset with 100 samples for evaluation
-- `train.jsonl` - Training dataset with ~2000 samples  
-- `train_data/` - Enhanced training data in different sizes
-  - `messages_generate_*.jsonl` - Generation training messages (150/300/600 samples)
-  - `messages_select_*.jsonl` - Selection training messages (150/300/600 samples)
-
-#### `/src/` - Main Source Code (Windows-compatible)
-- `automatic_bolt_diy/` - **Automated website generation with Bolt.diy**
-  - `eval_bolt_diy.py` - Main evaluation script for testing LLMs on Bolt.diy
-  - `automatic_web_gen.py` - Core automation logic for web generation
-  - `loop.bat` - Batch script for automatic restarting
-- `ui_test_bolt/` - **UI testing with WebVoyager agent**
-  - `ui_eval_with_answer.py` - UI evaluation with automated testing
-  - `compute_acc.py` - Accuracy computation from test results
-  - `start_service.py` - Service startup utilities
-- `grade_appearance_bolt_diy/` - **Website appearance evaluation**
-  - `eval_appearance.py` - Appearance scoring using vision-language models
-  - `get_screenshots.py` - Screenshot capture utilities
-  - `compute_grade.py` - Grade computation from appearance scores
-  - `filter_based_on_result.py` - Data filtering based on appearance scores
-- `ui_test_aider/` - UI testing for Aider platform
-- `ui_test_oh/` - UI testing for OpenHands platform  
-- `grade_appearance_aider/` - Appearance evaluation for Aider
-- `grade_appearance_oh/` - Appearance evaluation for OpenHands
-- `annotation_ui/` - Manual annotation tools for UI testing
-
-#### `/src-remote/` - Server-side Code (Linux-compatible)
-- `train/` - **Model training infrastructure**
-  - `train.py` - Main training script using transformers and deepspeed
-  - `train_WebGen-LM-*.sh` - Training scripts for different model sizes
-  - `utils/` - Training utilities (loader, trainer, utilities)
-- `deploy/` - **Model deployment scripts**
-  - `deploy_qwenvl_32b.sh` - Deploy Qwen2.5-VL-32B for UI testing
-  - `deploy_coder.sh` - Deploy trained models with vLLM
-- `process_train/` - **Data processing pipeline**
-  - `deduplicate/` - Data deduplication and decontamination
-  - `process_for_train/` - Convert data to training format
-- `download/` - Model download utilities
-
-#### `/webvoyager/` - UI Testing Agent
-- `run.py` - Main WebVoyager agent execution
-- `prompts.py` - System prompts for web navigation
-- `utils.py` - Utility functions for web interaction
-- `evaluation/` - Evaluation framework for UI testing
-- `data/` - Test task definitions
-
-#### `/outputs/` - Experimental Results
-Contains results from various LLM evaluations:
-- `bolt_*` - Results from Bolt.diy testing
-- `aider_*` - Results from Aider testing  
-- `oh_*` - Results from OpenHands testing
-
-### Key Components and Workflows
-
-#### 1. **Website Generation Evaluation**
-- **Platform**: Bolt.diy (primary), OpenHands, Aider
-- **Process**: LLM generates website code → Deploy to local server → Capture results
-- **Script**: `src/automatic_bolt_diy/eval_bolt_diy.py`
-
-#### 2. **UI Testing with WebVoyager**
-- **Agent**: WebVoyager (vision-language model for web interaction)
-- **Process**: Load generated website → Execute UI test tasks → Evaluate results
-- **Script**: `src/ui_test_bolt/ui_eval_with_answer.py`
-
-#### 3. **Appearance Scoring**
-- **Method**: Vision-language model evaluation of website screenshots
-- **Process**: Capture screenshots → VLM scoring → Filter high-quality results
-- **Script**: `src/grade_appearance_bolt_diy/eval_appearance.py`
-
-#### 4. **Model Training**
-- **Data**: Filtered website generation examples
-- **Models**: WebGen-LM-7B/14B/32B based on Qwen2.5-Coder
-- **Script**: `src-remote/train/train.py`
-
-### Data Format
-
-Each sample in the dataset contains:
-- `instruction` - Natural language description of website requirements
-- `Category` - Primary and secondary categories 
-- `application_type` - Type of application (e.g., "Analytics Platforms/Dashboards")
-- `ui_instruct` - List of UI test tasks with expected results
-
-### Application Types Covered
-- Analytics Platforms/Dashboards
-- Browser-Based Games  
-- Company Brochure Sites
-- Productivity Applications
-- Social Media Platforms
-- E-commerce Systems
-- Content Management Systems
-
-## Testing Proprietary and Open-Source Models
-
-### Installation
-
-First, install Node.js following [Node.js Download Page](https://nodejs.org/en/download/).
-
-Then, install pm2:
-```batch
-npm install -g pm2
+```bash
+pip install openhands
+cp .env.example .env
+# Edit .env with your DEEPSEEK_API_KEY and QWEN_API_KEY
+# Build Docker image (first time only)
+python openhands_integration/launch_multi_docker.py --build
 ```
 
-To install WebVoyager:
+### 2. Run main experiment (LLM injection)
 
-```shell
-conda create -p env\webvoyager python=3.10 -y
-conda activate env\webvoyager
-cd webvoyager
-pip install -r requirements.txt
-pip install numpy
-# we encoungered a minor conflict, which we patched up by commenting proxies=proxies, in "env\webvoyager\lib\site-packages\openai\_base_client.py", line 738
+```bash
+# Single project
+python openhands_integration/launch_multi_docker.py \
+  --projects 000001 --workers 1
+
+# Batch (projects 000001-000010)
+python openhands_integration/launch_multi_docker.py \
+  --start 000001 --end 000010 --workers 4
 ```
 
-### Testing Bolt.diy
-<a name="test-bolt">
-</a>
+### 3. Run ablations
 
-#### Installing and Starting Bolt.diy
-
-First, install our forked version of Bolt.diy. Minor adjustments had been made to it in order to support automatic evaluation. 
-
-```shell
-git clone https://github.com/mnluzimu/bolt.diy-Fork.git
-cd bolt.diy-Fork
-npm install -g pnpm
-pnpm install
+```bash
+# Raw-logs ablation (no LLM brief, repair from raw telemetry)
+python openhands_integration/launch_multi_docker.py \
+  --start 000001 --end 000010 \
+  --raw-logs --only-repair --workers 4
 ```
 
-Before starting the service, first copy the `.env.example` file and rename it as `.env.local`. Then configure the api keys and base urls. You should configure the LLM provider API of your choice in `.env.local`. (For example, create an openrouter api key at [Open Router AIP](https://openrouter.ai/settings/keys) and past it at `OPEN_ROUTER_API_KEY`.)
-
-Also, remember to configer `VITE_GITHUB_ACCESS_TOKEN` with your github api, which will be used for importing templates.
-
-Then run:
-
-```shell
-pnpm run dev
-```
-
-This will output something like:
-
-```terminal
-
-> bolt@0.0.7 dev D:\research\bolt\opensource\bolt.diy-Fork
-> node pre-start.cjs  && remix vite:dev
-
-
-★═══════════════════════════════════════★
-          B O L T . D I Y
-         ⚡️  Welcome  ⚡️
-★═══════════════════════════════════════★
-
-📍 Current Version Tag: v"0.0.7"
-📍 Current Commit Version: "08d88c1"
-  Please wait until the URL appears here
-★═══════════════════════════════════════★
- warn  Data fetching is changing to a single fetch in React Router v7
-┃ You can use the `v3_singleFetch` future flag to opt-in early.
-┃ -> https://remix.run/docs/en/2.13.1/start/future-flags#v3_singleFetch
-┗
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: use --host to expose
-  ➜  press h + enter to show help
-```
-
-You can get the url of the Bolt.diy service after `Local:` (in this case: `http://localhost:5173/`).
-
-#### Starting Automatic Testing
-
-You can start automatic testing of Bolt.diy by running the following command, for example:
-
-```batch
-python src\automatic_bolt_diy\eval_bolt_diy.py ^
-    --jsonl_path data\test.jsonl ^
-    --url http://localhost:5173/ ^
-    --provider OpenRouter ^
-    --desired_model deepseek/deepseek-chat-v3-0324:free
-```
-
-This example command would output the results under `downloads\OpenRouter\deepseek-chat-v3-0324_free_test`, including `.json` and `.zip` files for each test sample. The testing can sometimes be aborted due to connection issues, so you are recommanded to use `src\automatic_bolt_diy\loop.bat` by replacing the command inside the loop to achieve automatic restarting.
-
-#### Evaluating Generated Websites with an UI Agent
-
-You can deploy Qwen2.5-VL-32B-Instruct on a server with four GPUs using `src-remote/deploy/deploy_qwenvl_32b.sh`. After installation following commands in `src-remote/deploy/install.sh`.
-
-Then we use the WebVoyager UI agent to perform test case operations and assess the outcome. Assuming you have installed the `env\webvoyager` conda environment previously, you can run `src\ui_test_bolt\run_ui_eval_with_answer.bat`, for example:
-
-```batch
-src\ui_test_bolt\run_ui_eval_with_answer.bat downloads\OpenRouter\deepseek-chat-v3-0324_free_test
-```
-
-This example command would output the UI agent testing results under `downloads\OpenRouter\deepseek-chat-v3-0324_free_test\extracted\results`.
-
-#### Computing the Accuracy
-
-Then you can compute the accuracy as well as other statistics such as yes rate, partial rate, and no rate using `src\ui_test_bolt\compute_acc.py`. For example:
-
-```shell
-python src\ui_test_bolt\compute_acc.py downloads\OpenRouter\deepseek-chat-v3-0324_free_test
-```
-
-This example would print the results in terminal, as well as record the results in `downloads\OpenRouter\deepseek-chat-v3-0324_free_test\extracted\table.md`.
-
-#### Evaluating Appearance Score
-
-Generate the appearance score of the websites using:
-
-```shell
-python src\grade_appearance_bolt_diy\eval_appearance.py downloads\OpenRouter\deepseek-chat-v3-0324_free_test -t data\test.jsonl
-```
-
-This would generate the screeshot and `result.json` file under `downloads\OpenRouter\deepseek-chat-v3-0324_free_test\extracted\000007\shots`. Then compute average appearance score using:
-
-```shell
-python src\grade_appearance_bolt_diy\compute_grade.py src\grade_appearance_bolt_diy\eval_appearance.py downloads\OpenRouter\deepseek-chat-v3-0324_free_test
-```
-
-### Testing OpenHands
-
-You can test OpenHands using our forked repo [OpenHands-WebGen-Fork](https://github.com/mnluzimu/OpenHands-WebGen-Fork). You should configure it based on [OpenHands README](https://github.com/mnluzimu/OpenHands-WebGen-Fork/blob/main/README.md), then run:
-
-```shell
-docker pull docker.all-hands.dev/all-hands-ai/runtime:0.25-nikolaik
-cd OpenHands-WebGen-Fork
-python src/test_webgen-bench/test_webgen_bench.py
-```
-
-### Testing Aider
-
-You can test Aider using our forked repo [Aider-WebGen-Fork](https://github.com/YunqiaoYang/Aider-WebGen-Fork). You should configure it based on [Aider README](https://github.com/YunqiaoYang/Aider-WebGen-Fork/blob/main/README.md), then run:
-
-```shell
-cd .\working_dirs
-python ..\src\batch_generate.py
-```
-
-## Training WebGen-LM
-
-### Data Deduplication and Decontamination
-
-This part is *not necessary for reproducing training*. It is our data deduplication and decontamination process, which was conducted to ensure that the training set is not contaminated by the test set. We place the files for deduplication and decontamination under `src-remote\process_train\deduplicate`.
-
-```shell
-pip install sentence-transformers scikit-learn editdistance
-python src-remote/process_train/deduplicate/rule_deduplication.py
-python src-remote/process_train/deduplicate/decontamination_ngram.py
-python src-remote/process_train/deduplicate/test_decontamination_semantic.py --test_file data/test.jsonl --train_file data/train_processed/train_decontaminated_ngram5.jsonl --sim_threshold 0.55 --output_file data/train_processed/train_decontaminated_ngram5_semantic.jsonl --contaminated_file data/train_processed/train_contaminated_ngram5_semantic.jsonl
-```
-
-### Generating Training Data
-
-(If you do not need to generate your own data, you can *skip this section* and directly use the data under `data/train_data`.)
-
-#### Data Generation
-
-First, generate training data using:
-
-```batch
-python src/automatic_bolt_diy/eval_bolt_diy.py ^
-    --jsonl_path data/train.jsonl ^
-    --url http://localhost:5173/ ^
-    --provider OpenRouter ^
-    --desired_model deepseek/deepseek-chat-v3-0324:free
-```
-
-Remember to replace `http://localhost:5173/` with the actual url of your bolt.diy service. This will output data under `downloads\OpenRouter\deepseek-chat-v3-0324_free_train`.
-
-#### Data Filtering
-
-Then, filter the data by generating the appearance score of each website using:
-
-```shell
-python src\grade_appearance_bolt_diy\eval_appearance.py downloads\OpenRouter\deepseek-chat-v3-0324_free_train -t data\train.jsonl
-```
-
-This would generate the screeshot and `result.json` file under `downloads\OpenRouter\deepseek-chat-v3-0324_free_train\extracted\000007\shots`. Then extract the filtered files using:
-
-```shell
-python src\grade_appearance_bolt_diy\filter_based_on_result.py downloads\OpenRouter\deepseek-chat-v3-0324_free_train
-```
-
-This would copy the filtered files under `downloads\OpenRouter\deepseek-chat-v3-0324_free_train\deepseek-chat-v3-0324_free_train_filtered`.
-
-#### Converting to Training File Format
-
-(We uplated the `downloads\OpenRouter\deepseek-chat-v3-0324_free_train\deepseek-chat-v3-0324_free_train_filtered` to a Linux server and executed the following files there.)
-
-Convert the filtered files into the training format by running:
-
-```shell
-python src-remote/process_train/process_for_train/get_train.py 
-```
-
-### Finetuning
-
-#### Installation
-
-Create a conda environment:
-
-```shell
-conda create -p env/trainenv python=3.10
-conda activate env/trainenv
-```
-
-First, install pytorch from [Pytorch Official Website](https://pytorch.org/) based on your cuda version. Then install other dependencies:
-
-```shell
-pip install -r requirements.txt
-```
-
-#### Training
-
-The training scripts are under `src-remote/train`. You likely need to modify the files based on your own cluster before running:
-
-```shell
-bash src-remote/train/train_WebGen-LM-7B.sh
-bash src-remote/train/train_WebGen-LM-14B.sh
-bash src-remote/train/train_WebGen-LM-32B.sh
-bash src-remote/train/train_Qwen2_5-Coder-32B-Instruct_ablation_150samples.sh
-bash src-remote/train/train_Qwen2_5-Coder-32B-Instruct_ablation_300samples.sh
-```
-
-### Evaluation
-
-This is the same as [Testing Bolt.diy](#test-bolt). The only difference is that you should host the trained model yourself using vllm. As in `src-remote/deploy/deploy_coder.sh`:
-
-```shell
-vllm serve models/Qwen2_5-Coder-32B-Instruct_app-bench_train_batch13_filtered_decontaminated_new \
-    --dtype auto \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --pipeline-parallel-size 1 \
-    --tensor-parallel-size 4 \
-    --cpu-offload-gb 0 \
-```
-
-You should also configure the `.env.local` file in `bolt.diy-Fork` by setting the values of `OPENAI_LIKE_API_BASE_URL` to `http://IP_ADDRESS:PORT/v1`. Then you can start inference by running:
-
-```shell
-python src\automatic_bolt_diy\eval_bolt_diy.py ^
-    --jsonl_path data\test.jsonl ^
-    --url http://localhost:5173/ ^
-    --provider OpenAILike ^
-    --desired_model Qwen2_5-Coder-32B-Instruct_app-bench_train_batch13_filtered_decontaminated_new
-```
-
-Everything after is similar to [Testing Bolt.diy](#test-bolt).
-
-## Citation
-
-If you find our project useful, please cite:
+### 4. CLI Reference
+
+| Flag | Type | Description |
+|---|---|---|
+| `--projects` | str | Comma-separated project IDs |
+| `--start / --end` | str | Project range (e.g. 000001-000101) |
+| `--workers` | int | Max parallel containers (default 2) |
+| `--model` | str | Unified model name |
+| `--raw-logs` | flag | Ablation: skip LLM brief, use raw telemetry |
+| `--only-repair` | flag | Repair-only: skip v1 gen+injection+WV1 |
+| `--skip-existing` | flag | Skip completed projects |
+| `--container-cli` | str | Container CLI (docker/podman) |
+| `--build` | flag | Build Docker image before launch |
+| `--webvoyager-workers` | int | WebVoyager workers per project (default 2) |
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `DEEPSEEK_API_KEY` | DeepSeek API key (code generation/repair) |
+| `DEEPSEEK_MODEL` | DeepSeek model (default deepseek-v4-flash) |
+| `QWEN_API_KEY` | Qwen API key (WebVoyager browser agent) |
+| `QWEN_MODEL` | Qwen model (default qwen3.5-plus) |
+| `CONTAINER_CLI` | Container CLI (default docker) |
+| `WEBVOYAGER_NUM_WORKERS` | Internal WebVoyager parallelism |
+
+## Experiment Data
+
+All data under `batch_runs/official/`. See `EXPERIMENT_MANIFEST.json` for details.
+
+| Experiment | Model | Description |
+|---|---|---|
+| `flash_llm_injection_analysis/` + `flash_llm_injection_data/` | Flash | Main experiment (101 projects, 647 tasks) |
+| `flash_raw_logs_ablation/` | Flash | Ablation: raw-log repair |
+| `pro_llm_injection/` | Pro | Main experiment (96 projects, 610 tasks) |
+| `pro_raw_logs_ablation/` | Pro | Ablation: raw-log repair |
+| `analysis_trace_vs_no_log/` | — | Auxiliary analysis |
+
+Paper statistics under `batch_runs/paper_materials/output/`.
+
+## Directory Structure
 
 ```
-@misc{lu2025webgenbenchevaluatingllmsgenerating,
-      title={WebGen-Bench: Evaluating LLMs on Generating Interactive and Functional Websites from Scratch}, 
-      author={Zimu Lu and Yunqiao Yang and Houxing Ren and Haotian Hou and Han Xiao and Ke Wang and Weikang Shi and Aojun Zhou and Mingjie Zhan and Hongsheng Li},
-      year={2025},
-      eprint={2505.03733},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2505.03733}, 
-}
+TeleGen/
+├── README.md                    ← This file
+├── .env                         ← API keys (git-ignored)
+├── data/test.jsonl              ← WebGen-Bench test data
+├── docker/                      ← Docker build files
+├── webvoyager/                  ← WebVoyager browser agent
+├── batch_runs/
+│   ├── official/                ← Official experiment data
+│   └── paper_materials/         ← Paper statistics & appendix
+└── openhands_integration/       ← Core pipeline code
+    ├── launch_multi_docker.py
+    ├── run_batch.py
+    ├── optimize_batch_results.py
+    ├── dynamic_repair_pipeline.py
+    ├── prompts/                 ← Prompt templates
+    └── ...
 ```

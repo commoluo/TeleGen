@@ -14,6 +14,11 @@ from typing import Dict, List, Optional, Tuple
 import requests
 from dotenv import load_dotenv
 
+try:
+    from model_config import to_direct_api_model
+except ModuleNotFoundError:
+    from openhands_integration.model_config import to_direct_api_model
+
 
 PROMPT_TEMPLATE = """You are a log analysis assistant. I will provide you with a frontend application console log.
 Your job is to clean the noise, extract meaningful signals, and reconstruct a clear user
@@ -376,7 +381,7 @@ def _compute_timeout(log_chars: int, base_timeout: int) -> int:
 
 def _load_env(workspace_root: Path) -> None:
     load_dotenv(workspace_root / ".env")
-    load_dotenv(workspace_root / "alternative_generation" / ".env")
+    # .env loaded from workspace root above
 
 
 def _infer_provider_from_model(model: str) -> str:
@@ -394,10 +399,11 @@ def _resolve_api_base_url(model: str) -> str:
         return os.getenv("QWEN_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     if provider == "deepseek":
         return os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
-    # Default to Qwen/Dashscope endpoint.
+    if os.getenv("DEEPSEEK_API_KEY"):
+        return os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
     if os.getenv("QWEN_API_KEY") or os.getenv("WEBVOYAGER_API_KEY"):
         return os.getenv("QWEN_API_BASE_URL") or os.getenv("WEBVOYAGER_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    return os.getenv("API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    return os.getenv("API_BASE_URL", "https://api.deepseek.com")
 
 
 def _resolve_api_key(model: str, base_url: str) -> str:
@@ -503,6 +509,7 @@ def _find_overlap_size(previous: str, current: str, max_window: int = 2000) -> i
 
 def _chat_completion_once(model: str, messages: List[Dict[str, str]], max_tokens: int, timeout: int = DEFAULT_TIMEOUT) -> Tuple[str, str]:
     import sys, time
+    request_model = to_direct_api_model(model)
     base_url = _resolve_api_base_url(model)
     fallback_key = _resolve_api_key(model, base_url)
     key_candidates = _api_key_candidates(model, base_url)
@@ -514,13 +521,12 @@ def _chat_completion_once(model: str, messages: List[Dict[str, str]], max_tokens
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
-        "model": model,
+        "model": request_model,
         "messages": messages,
         "temperature": 0.0,
         "top_p": 0.9,
         "max_tokens": max_tokens,
         "stream": False,
-        "extra_body": {"enable_thinking": False},
     }
 
     last_error = ""
@@ -534,7 +540,7 @@ def _chat_completion_once(model: str, messages: List[Dict[str, str]], max_tokens
         for attempt_index, attempt_timeout in enumerate(dict.fromkeys([timeout, max(timeout, 120)]), start=1):
             try:
                 print(
-                    f"[extractor] POST {url} (model={model}, key_src={key_source}, timeout={attempt_timeout}s, attempt={attempt_index}) ...",
+                    f"[extractor] POST {url} (model={request_model}, key_src={key_source}, timeout={attempt_timeout}s, attempt={attempt_index}) ...",
                     flush=True,
                 )
                 t0 = time.time()
@@ -718,7 +724,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="LLM extractor for frontend console logs")
     parser.add_argument("--input", required=True, help="Path to console log file or results directory")
     parser.add_argument("--output", required=True, help="Output markdown path")
-    parser.add_argument("--model", default=None, help="Model name (default: QWEN_MODEL env or qwen3.5-plus)")
+    parser.add_argument("--model", default=None, help="Model name (default: DEEPSEEK_MODEL env or deepseek-v4-flash)")
     parser.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS, help="Max preprocessed input chars sent to LLM")
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max tokens per completion round")
     parser.add_argument("--max-rounds", type=int, default=DEFAULT_MAX_ROUNDS, help="Continuation rounds when output hits token limit")
@@ -730,10 +736,9 @@ def main() -> None:
 
     model = (
         args.model
-        or os.getenv("QWEN_MODEL")
-        or os.getenv("WEBVOYAGER_MODEL")
+        or os.getenv("DEEPSEEK_MODEL")
         or os.getenv("DEFAULT_MODEL")
-        or "qwen3.5-plus"
+        or "deepseek-v4-flash"
     )
 
     input_path = Path(args.input).resolve()

@@ -25,7 +25,7 @@ import urllib.error
 
 from dotenv import load_dotenv
 
-from model_config import to_openhands_model
+from model_config import to_deepseek_model, to_openhands_model
 from telemetry_sanitizer import render_markdown_report, sanitize_console_logs
 from webvoyager_eval import evaluate_task_dir, load_task_results
 
@@ -46,7 +46,7 @@ def _get_webvoyager_worker_count(num_tasks: int) -> int:
 @contextmanager
 def _exclusive_web_stack_lock():
     """Serialize local app startup and WebVoyager runs across launchers."""
-    lock_path = Path(os.getenv("PIPELINE_WEB_STACK_LOCK", "/tmp/fullstack_web_stack.lock"))
+    lock_path = Path(os.getenv("PIPELINE_WEB_STACK_LOCK", "/tmp/telegen_web_stack.lock"))
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w", encoding="utf-8") as lock_file:
         print(f"[web-lock] Waiting for Web stack lock: {lock_path}")
@@ -128,12 +128,21 @@ def _materialize_missing_local_data_modules(source_file: Path) -> None:
 def _load_runtime_env(workspace_root: Path) -> None:
     """Load project env files for standalone script execution."""
     load_dotenv(workspace_root / ".env")
-    load_dotenv(workspace_root / "alternative_generation" / ".env")
 
 
 def _build_openhands_llm_env(env: Dict[str, str]) -> Dict[str, str]:
     """Populate OpenHands-required LLM env vars from existing workspace credentials."""
     out = dict(env)
+
+    # DeepSeek is the project default for text-only OpenHands generation/repair.
+    deepseek_key = out.get("DEEPSEEK_API_KEY")
+    if deepseek_key:
+        out["LLM_API_KEY"] = deepseek_key
+        out["LLM_MODEL"] = to_deepseek_model(out.get("DEEPSEEK_MODEL", "deepseek-v4-flash"))
+        out["LLM_PROVIDER"] = "deepseek"
+        out["LLM_BASE_URL"] = out.get("DEEPSEEK_API_BASE_URL") or "https://api.deepseek.com"
+        out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
+        return out
 
     if out.get("LLM_API_KEY") and out.get("LLM_MODEL"):
         out.setdefault("LLM_EXTRA_BODY", '{"enable_thinking": false}')
@@ -147,7 +156,7 @@ def _build_openhands_llm_env(env: Dict[str, str]) -> Dict[str, str]:
         out.setdefault("LLM_EXTRA_BODY", '{"enable_thinking": false}')
         return out
 
-    # Priority 2: Qwen credentials (preferred for this project).
+    # Priority 2: Qwen credentials fallback.
     qwen_key = out.get("QWEN_API_KEY")
     if qwen_key:
         out["LLM_API_KEY"] = qwen_key
@@ -157,22 +166,13 @@ def _build_openhands_llm_env(env: Dict[str, str]) -> Dict[str, str]:
         out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
         return out
 
-    # Priority 3: WebVoyager credentials.
+    # Priority 3: WebVoyager credentials fallback.
     wv_key = out.get("WEBVOYAGER_API_KEY")
     if wv_key:
         out["LLM_API_KEY"] = wv_key
         out["LLM_MODEL"] = to_openhands_model(out.get("PIPELINE_MODEL") or out.get("QWEN_MODEL", "qwen3.5-plus"))
         out["LLM_PROVIDER"] = "openai"
         out["LLM_BASE_URL"] = out.get("WEBVOYAGER_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
-        return out
-
-    # Priority 4: DeepSeek credentials.
-    if out.get("DEEPSEEK_API_KEY"):
-        out["LLM_API_KEY"] = out["DEEPSEEK_API_KEY"]
-        out["LLM_MODEL"] = out.get("LLM_MODEL") or "deepseek/deepseek-chat"
-        out["LLM_PROVIDER"] = "deepseek"
-        out["LLM_BASE_URL"] = out.get("DEEPSEEK_API_BASE_URL") or "https://api.deepseek.com"
         out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
         return out
 
@@ -200,15 +200,15 @@ class PipelinePaths:
         self.webvoyager_v2_results = self.experiment_workspace / "webvoyager_v2_results"
 
 
-def derive_experiment_workspace(source_workspace: Path) -> Path:
+def derive_experiment_workspace(source_workspace: Path, branch_name: Optional[str] = None) -> Path:
     source_name = source_workspace.name
-    if source_name.endswith("_AST"):
-        experiment_name = source_name[:-4] + "_v2_AST"
-    elif source_name.endswith("_LLM"):
-        experiment_name = source_name[:-4] + "_v2_LLM"
+    if source_name.endswith("_LLM"):
+        base = source_name[:-4] + "_v2_LLM"
     else:
-        experiment_name = f"{source_name}_v2_experiment"
-    return source_workspace.parent / experiment_name
+        base = f"{source_name}_v2_experiment"
+    if branch_name and branch_name not in ("logged",):
+        base = f"{base}_{branch_name}"
+    return source_workspace.parent / base
 
 
 def _run(cmd, cwd: Path, env: Optional[Dict[str, str]] = None, timeout: Optional[int] = None):
@@ -467,11 +467,10 @@ def phase1_build_telemetry_brief(
     else:
         model_candidates.extend(
             [
+                os.getenv("DEEPSEEK_MODEL", ""),
                 os.getenv("PIPELINE_MODEL", ""),
-                os.getenv("QWEN_MODEL", ""),
-                os.getenv("WEBVOYAGER_MODEL", ""),
                 os.getenv("DEFAULT_MODEL", ""),
-                "qwen3.5-plus",
+                "deepseek-v4-flash",
             ]
         )
     model_candidates = [m for m in model_candidates if m]
@@ -1144,7 +1143,7 @@ def phase3_webvoyager_test(
             webvoyager_output = paths.webvoyager_v2_results
             webvoyager_workers = _get_webvoyager_worker_count(num_tasks)
 
-            api_model = os.getenv("WEBVOYAGER_MODEL", "qwen-vl-max")
+            api_model = os.getenv("WEBVOYAGER_MODEL", "qwen3.5-plus")
             api_base = os.getenv("WEBVOYAGER_API_BASE_URL") or os.getenv("QWEN_API_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
             api_key = os.getenv("WEBVOYAGER_API_KEY") or os.getenv("QWEN_API_KEY")
             if not api_key:
@@ -1230,8 +1229,8 @@ def phase3_webvoyager_test(
     return result
 
 
-def build_paths(source_workspace: Path, webvoyager_results: Path) -> PipelinePaths:
-    experiment_workspace = derive_experiment_workspace(source_workspace)
+def build_paths(source_workspace: Path, webvoyager_results: Path, branch_name: Optional[str] = None) -> PipelinePaths:
+    experiment_workspace = derive_experiment_workspace(source_workspace, branch_name=branch_name)
     telemetry_report = experiment_workspace / "telemetry_report.md"
     openhands_task_file = experiment_workspace / "openhands_repair_task.txt"
     return PipelinePaths(
