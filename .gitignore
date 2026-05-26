@@ -1,53 +1,31 @@
+# Environment & secrets
 .env
+
+# Dependencies
+node_modules/
+__pycache__/
+
+# Build artifacts
+*.pyc
+*.zip
+*.tar.gz
+*.log
+
+# Editor / IDE
+.vscode/
+.claude/
 .DS_Store
-extracted
-env
-node_modules
 
-__pycache__
-downloads
-wandb
+# Experiment outputs (large data)
+batch_runs/
+openhands_workspace/
+openhands_generated/
+webvoyager_results/
+validation_results/
+experiment_logs/
 
-# 输出和结果目录
-outputs
-outputs.zip
-gather_statistics
-
-
-# WebVoyager 数据目录
+# WebVoyager runtime
 webvoyager/webvoyager_results/
 webvoyager/__pycache__/
 webvoyager/downloads/
 webvoyager/data/
-
-# OpenHands 工作区和验证结果
-openhands_workspace/
-openhands_generated/
-validation_results/
-openhands_generated/
-webvoyager_results/
-webvoyager_task_*.jsonl
-tmp_wv_*.py
-ullSymbols
-
-# Experiment/runtime artifacts
-batch_runs/
-experiment_logs/
-webvoyager_results/
-webvoyager_task_*.jsonl
-_inspect_results*.py
-tmp_*.py
-ullSymbols
-rerun_wv1_*.sh
-run_relabel*.sh
-start_pipeline.sh
-组会汇报_*.md
-openhands_integration/run_relay_*.sh
-
-# Local editor/agent settings
-.claude/settings.local.json
-
-# 大型数据文件
-*.zip
-*.tar.gz
-*.log
