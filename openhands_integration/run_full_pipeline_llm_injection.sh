@@ -75,7 +75,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 LOGGED_SOURCE_VARIANT="llm"
-LOGGED_SOURCE_SUFFIX="LLM"OG_PROMPT="$WORKSPACE/openhands_integration/prompts/no_log_baseline_repair_prompt.txt"
+LOGGED_SOURCE_SUFFIX="LLM"
+
+RAW_LOGS_PROMPT="$WORKSPACE/openhands_integration/prompts/raw_logs_repair_prompt.txt"
+EVIDENCE_PROMPT="$WORKSPACE/openhands_integration/prompts/evidence_based_optimization_prompt.txt"
+NO_LOG_PROMPT="$WORKSPACE/openhands_integration/prompts/no_log_baseline_repair_prompt.txt"
 
 # Logging
 exec > >(tee -a "$PIPELINE_LOG") 2>&1
