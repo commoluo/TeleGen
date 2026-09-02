@@ -1,5 +1,6 @@
 # Environment & secrets
 .env
+.env.*
 
 # Dependencies
 node_modules/
@@ -23,6 +24,9 @@ openhands_generated/
 webvoyager_results/
 validation_results/
 experiment_logs/
+experiments/
+analysis/
+human_validation_telegen/
 
 # WebVoyager runtime
 webvoyager/webvoyager_results/

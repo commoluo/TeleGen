@@ -102,8 +102,10 @@ echo "=================================================="
 
 cd "$WORKSPACE"
 
-# Clear proxy env vars that interfere with API calls
-unset ALL_PROXY all_proxy HTTP_PROXY HTTPS_PROXY http_proxy https_proxy 2>/dev/null || true
+# NOTE: proxy env vars are intentionally preserved so that official-API gemini
+# calls (generation/injection/repair) can reach googleapis via the container
+# https_proxy (host Clash). dashscope/qwen stay direct via no_proxy.
+# unset ALL_PROXY all_proxy HTTP_PROXY HTTPS_PROXY http_proxy https_proxy 2>/dev/null || true
 
 MODEL_ARGS=()
 if [[ -n "$MODEL_NAME" ]]; then

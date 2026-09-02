@@ -386,6 +386,8 @@ def _load_env(workspace_root: Path) -> None:
 
 def _infer_provider_from_model(model: str) -> str:
     m = (model or "").lower()
+    if "gemini" in m:
+        return "gemini"
     if "qwen" in m:
         return "qwen"
     if "deepseek" in m:
@@ -399,6 +401,8 @@ def _resolve_api_base_url(model: str) -> str:
         return os.getenv("QWEN_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     if provider == "deepseek":
         return os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
+    if provider == "gemini":
+        return os.getenv("TRANSIT_API_BASE_URL") or os.getenv("DEEPSEEK_API_BASE_URL") or os.getenv("GEMINI_API_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai"
     if os.getenv("DEEPSEEK_API_KEY"):
         return os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
     if os.getenv("QWEN_API_KEY") or os.getenv("WEBVOYAGER_API_KEY"):
@@ -430,6 +434,8 @@ def _resolve_api_key(model: str, base_url: str) -> str:
             or ""
         )
 
+    if provider == "gemini":
+        return os.getenv("TRANSIT_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
     if provider == "deepseek":
         return os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
 
@@ -471,6 +477,11 @@ def _api_key_candidates(model: str, base_url: str) -> List[Tuple[str, str]]:
                 candidates.append((name, val))
     elif provider == "qwen":
         for name in ["QWEN_API_KEY", "DASHSCOPE_API_KEY", "WEBVOYAGER_API_KEY"]:
+            val = os.getenv(name)
+            if val:
+                candidates.append((name, val))
+    elif provider == "gemini":
+        for name in ["TRANSIT_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"]:
             val = os.getenv(name)
             if val:
                 candidates.append((name, val))

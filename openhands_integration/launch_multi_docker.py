@@ -39,6 +39,13 @@ FORWARDED_ENV = [
     "LLM_BASE_URL",
     "LLM_EXTRA_BODY",
     "WEBVOYAGER_NUM_WORKERS",
+    "V1_NOLOG_MODEL",
+    "V1_NOLOG_MANIFEST",
+    "TRANSIT_API_KEY",
+    "TRANSIT_API_BASE_URL",
+    "GEMINI_API_KEY",
+    "https_proxy", "http_proxy", "HTTPS_PROXY", "HTTP_PROXY",
+    "no_proxy", "NO_PROXY",
 ]
 
 

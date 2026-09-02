@@ -154,7 +154,7 @@ def main() -> None:
     # Ensure standalone batch runs can resolve model credentials.
     workspace_root = Path(__file__).resolve().parent.parent
     load_dotenv(workspace_root / ".env")
-    _clear_proxy_env()
+    # _clear_proxy_env()  # NOTE: preserved for official-API gemini repair (needs https_proxy); WV2 uses no_proxy for dashscope
 
     unified_model = normalize_model_name(args.model)
     if unified_model:

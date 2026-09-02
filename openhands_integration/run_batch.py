@@ -177,6 +177,7 @@ def wait_for_server(url, timeout=60):
         try:
             req = urllib.request.Request(url, method='GET')
             req.add_header('User-Agent', 'Mozilla/5.0')
+            req.add_header('Accept', '*/*')
             with urllib.request.urlopen(req, timeout=5) as response:
                 if response.status in [200, 301, 302]:
                     return True
@@ -703,9 +704,9 @@ def _has_semantic_log_markers(project_dir: Path) -> bool:
 
 def run_llm_log_injection(project_dir: Path, base_dir: Path, project_id: Optional[str] = None, test_spec_file: Optional[str] = None):
     """Run LLM-based semantic log injection for a single project."""
-    # Clear proxy env vars that interfere with API calls
-    for var in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-        os.environ.pop(var, None)
+    # NOTE: proxy env vars are intentionally preserved so that official-API
+    # gemini calls (injection/repair/generation) can reach googleapis via the
+    # container https_proxy. dashscope/qwen stay direct via no_proxy.
 
     sys.path.insert(0, str(Path(__file__).parent))
     from llm_log_injector import SemanticLogInjector
@@ -1217,11 +1218,29 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
                 env = dict(os.environ)
                 # OpenHands generation is text-only: prefer DeepSeek, keep Qwen for WebVoyager.
                 if os.getenv("DEEPSEEK_API_KEY"):
+                    _oh_model_raw = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
                     env["LLM_API_KEY"] = os.getenv("DEEPSEEK_API_KEY", "")
-                    env["LLM_MODEL"] = to_deepseek_model(os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"))
-                    env["LLM_PROVIDER"] = "deepseek"
                     env["LLM_BASE_URL"] = os.getenv("DEEPSEEK_API_BASE_URL") or "https://api.deepseek.com"
-                    env["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
+                    if "gemini" in _oh_model_raw.lower():
+                        _m = _oh_model_raw.split("/", 1)[1] if "/" in _oh_model_raw else _oh_model_raw
+                        _transit_base = os.getenv("TRANSIT_API_BASE_URL", "")
+                        if _transit_base:
+                            # Transit station (OpenAI-compatible relay): use openai
+                            # provider so LiteLLM sends to {transit_base}/chat/completions.
+                            env["LLM_MODEL"] = f"openai/{_m}"
+                            env["LLM_PROVIDER"] = "openai"
+                            env["LLM_BASE_URL"] = _transit_base
+                            env["LLM_API_KEY"] = os.getenv("TRANSIT_API_KEY", "")
+                        else:
+                            # Official Google API via native LiteLLM gemini provider.
+                            env["LLM_MODEL"] = f"gemini/{_m}"
+                            env["LLM_PROVIDER"] = "gemini"
+                            env.pop("LLM_BASE_URL", None)
+                    else:
+                        env["LLM_MODEL"] = to_deepseek_model(_oh_model_raw)
+                        env["LLM_PROVIDER"] = "deepseek"
+                        env['LLM_EXTRA_BODY'] = '{"enable_thinking": false}'
+                    pass  # per-branch above
                 else:
                     oh_api_key = os.getenv("QWEN_API_KEY") or os.getenv("WEBVOYAGER_API_KEY")
                     if oh_api_key:
@@ -1477,8 +1496,16 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
                         backend_env = dict(os.environ)
                         backend_env["PORT"] = str(backend_runtime_port)
                         backend_env["HOST"] = "0.0.0.0"
+                        if (backend_dir / "server.js").exists():
+                            _backend_cmd = ["node", "server.js"]
+                        elif (backend_dir / "index.js").exists():
+                            _backend_cmd = ["node", "index.js"]
+                        elif (backend_dir / "app.js").exists():
+                            _backend_cmd = ["node", "app.js"]
+                        else:
+                            _backend_cmd = ["npm", "start"]
                         backend_process = subprocess.Popen(
-                            ["npm", "start"],
+                            _backend_cmd,
                             cwd=str(backend_dir),
                             env=backend_env,
                             stdout=subprocess.PIPE,
@@ -1551,13 +1578,27 @@ def run_batch(start_id=None, end_id=None, single_id=None, skip_webvoyager=False,
                                 frontend_runtime_port = find_free_port(frontend_runtime_port + 1)
                             frontend_env = dict(os.environ)
                             frontend_env['PORT'] = str(frontend_runtime_port)
-                            frontend_process = subprocess.Popen(
-                                [
+                            frontend_env['HOST'] = '0.0.0.0'
+                            _fe_pkg = frontend_dir / "package.json"
+                            _fe_has_dev = False
+                            if _fe_pkg.exists():
+                                try:
+                                    import json as _json
+                                    _fe_scripts = _json.loads(_fe_pkg.read_text()).get("scripts", {})
+                                    _fe_has_dev = "dev" in _fe_scripts
+                                except Exception:
+                                    pass
+                            if _fe_has_dev:
+                                _fe_cmd = [
                                     "npm", "run", "dev", "--",
                                     "--host", "0.0.0.0",
                                     "--port", str(frontend_runtime_port),
                                     "--strictPort",
-                                ],
+                                ]
+                            else:
+                                _fe_cmd = ["npm", "start"]
+                            frontend_process = subprocess.Popen(
+                                _fe_cmd,
                                 cwd=str(frontend_dir),
                                 env=frontend_env,
                                 stdout=subprocess.PIPE,

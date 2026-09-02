@@ -137,11 +137,29 @@ def _build_openhands_llm_env(env: Dict[str, str]) -> Dict[str, str]:
     # DeepSeek is the project default for text-only OpenHands generation/repair.
     deepseek_key = out.get("DEEPSEEK_API_KEY")
     if deepseek_key:
+        _oh_model_raw = out.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
         out["LLM_API_KEY"] = deepseek_key
-        out["LLM_MODEL"] = to_deepseek_model(out.get("DEEPSEEK_MODEL", "deepseek-v4-flash"))
-        out["LLM_PROVIDER"] = "deepseek"
         out["LLM_BASE_URL"] = out.get("DEEPSEEK_API_BASE_URL") or "https://api.deepseek.com"
-        out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
+        if "gemini" in _oh_model_raw.lower():
+            _m = _oh_model_raw.split("/", 1)[1] if "/" in _oh_model_raw else _oh_model_raw
+            _transit_base = os.getenv("TRANSIT_API_BASE_URL", "")
+            if _transit_base:
+                # Transit station (OpenAI-compatible relay)
+                out["LLM_MODEL"] = f"openai/{_m}"
+                out["LLM_PROVIDER"] = "openai"
+                out["LLM_BASE_URL"] = _transit_base
+                out["LLM_API_KEY"] = os.getenv("TRANSIT_API_KEY", "")
+                out.pop("LLM_EXTRA_BODY", None)
+            else:
+                # Official Google API via native LiteLLM gemini provider
+                out["LLM_MODEL"] = f"gemini/{_m}"
+                out["LLM_PROVIDER"] = "gemini"
+                out.pop("LLM_BASE_URL", None)
+                out.pop("LLM_EXTRA_BODY", None)
+        else:
+            out["LLM_MODEL"] = to_deepseek_model(_oh_model_raw)
+            out["LLM_PROVIDER"] = "deepseek"
+            out["LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
         return out
 
     if out.get("LLM_API_KEY") and out.get("LLM_MODEL"):
@@ -1047,6 +1065,10 @@ def phase3_webvoyager_test(
                     cmd = [sys.executable, "server.py"]
                 elif (backend_dir / "server.js").exists():
                     cmd = ["node", "server.js"]
+                elif (backend_dir / "index.js").exists():
+                    cmd = ["node", "index.js"]
+                elif (backend_dir / "app.js").exists():
+                    cmd = ["node", "app.js"]
                 else:
                     cmd = ["npm", "start"]
 
@@ -1092,9 +1114,19 @@ def phase3_webvoyager_test(
                     else:
                         frontend_port = _find_free_port(port)
 
-                    cmd = ["npm", "run", "dev", "--", "--port", str(frontend_port), "--host", "0.0.0.0", "--strictPort"] if (frontend_dir / "vite.config.js").exists() else ["npm", "start"]
-                    if cmd[0] == "npm" and "dev" not in cmd:
+                    _fe_pkg = frontend_dir / "package.json"
+                    _fe_has_dev = False
+                    if _fe_pkg.exists():
+                        try:
+                            import json as _json
+                            _fe_scripts = _json.loads(_fe_pkg.read_text()).get("scripts", {})
+                            _fe_has_dev = "dev" in _fe_scripts
+                        except Exception:
+                            pass
+                    if _fe_has_dev:
                         cmd = ["npm", "run", "dev", "--", "--port", str(frontend_port), "--host", "0.0.0.0", "--strictPort"]
+                    else:
+                        cmd = ["npm", "start"]
 
                     frontend_env = dict(os.environ)
                     frontend_env["PORT"] = str(frontend_port)
