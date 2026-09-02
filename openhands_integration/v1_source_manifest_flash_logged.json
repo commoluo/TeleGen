@@ -1,0 +1,918 @@
+{
+  "model": "flash",
+  "variant": "logged",
+  "workspace": ".",
+  "project_count": 101,
+  "missing": [],
+  "projects": {
+    "000001": {
+      "project_id": "000001",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000001",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000001/gen_000001/project_000001_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000001/webvoyager_results/000001",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    },
+    "000002": {
+      "project_id": "000002",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145_retries/project_000002",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145_retries/project_000002/gen_000002/project_000002_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145_retries/project_000002/webvoyager_results/000002",
+      "logged_task_count": 5,
+      "logged_success_count": 1
+    },
+    "000003": {
+      "project_id": "000003",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000003",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000003/gen_000003/project_000003_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000003/webvoyager_results/000003",
+      "logged_task_count": 5,
+      "logged_success_count": 3
+    },
+    "000004": {
+      "project_id": "000004",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000004",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000004/gen_000004/project_000004_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000004/webvoyager_results/000004",
+      "logged_task_count": 7,
+      "logged_success_count": 7
+    },
+    "000005": {
+      "project_id": "000005",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000005",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000005/gen_000005/project_000005_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000005/webvoyager_results/000005",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    },
+    "000006": {
+      "project_id": "000006",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000006",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000006/gen_000006/project_000006_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000006/webvoyager_results/000006",
+      "logged_task_count": 6,
+      "logged_success_count": 6
+    },
+    "000007": {
+      "project_id": "000007",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000007",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000007/gen_000007/project_000007_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000007/webvoyager_results/000007",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000008": {
+      "project_id": "000008",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000008",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000008/gen_000008/project_000008_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022145/project_000008/webvoyager_results/000008",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000009": {
+      "project_id": "000009",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022645/project_000009",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022645/project_000009/gen_000009/project_000009_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_run_20260513_022645/project_000009/webvoyager_results/000009",
+      "logged_task_count": 9,
+      "logged_success_count": 3
+    },
+    "000010": {
+      "project_id": "000010",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000010_attempt2/project_000010",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000010_attempt2/project_000010/gen_000010/project_000010_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000010_attempt2/project_000010/webvoyager_results/000010",
+      "logged_task_count": 4,
+      "logged_success_count": 4
+    },
+    "000011": {
+      "project_id": "000011",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000011_attempt2/project_000011",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000011_attempt2/project_000011/gen_000011/project_000011_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000011_attempt2/project_000011/webvoyager_results/000011",
+      "logged_task_count": 9,
+      "logged_success_count": 8
+    },
+    "000012": {
+      "project_id": "000012",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000012_attempt2/project_000012",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000012_attempt2/project_000012/gen_000012/project_000012_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000012_attempt2/project_000012/webvoyager_results/000012",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000013": {
+      "project_id": "000013",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000013_attempt1/project_000013",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000013_attempt1/project_000013/gen_000013/project_000013_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000013_attempt1/project_000013/webvoyager_results/000013",
+      "logged_task_count": 8,
+      "logged_success_count": 2
+    },
+    "000014": {
+      "project_id": "000014",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000014_attempt1/project_000014",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000014_attempt1/project_000014/gen_000014/project_000014_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/watchdog_retries_20260513_022145/000014_attempt1/project_000014/webvoyager_results/000014",
+      "logged_task_count": 5,
+      "logged_success_count": 4
+    },
+    "000015": {
+      "project_id": "000015",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000015",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000015/gen_000015/project_000015_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000015/webvoyager_results/000015",
+      "logged_task_count": 5,
+      "logged_success_count": 4
+    },
+    "000016": {
+      "project_id": "000016",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000016_attempt1/project_000016",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000016_attempt1/project_000016/gen_000016/project_000016_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000016_attempt1/project_000016/webvoyager_results/000016",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000017": {
+      "project_id": "000017",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000017",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000017/gen_000017/project_000017_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000017/webvoyager_results/000017",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000018": {
+      "project_id": "000018",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000018",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000018/gen_000018/project_000018_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000018/webvoyager_results/000018",
+      "logged_task_count": 6,
+      "logged_success_count": 4
+    },
+    "000019": {
+      "project_id": "000019",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000019",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000019/gen_000019/project_000019_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000019/webvoyager_results/000019",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000020": {
+      "project_id": "000020",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000020",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000020/gen_000020/project_000020_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000020/webvoyager_results/000020",
+      "logged_task_count": 5,
+      "logged_success_count": 4
+    },
+    "000021": {
+      "project_id": "000021",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000021",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000021/gen_000021/project_000021_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000021/webvoyager_results/000021",
+      "logged_task_count": 5,
+      "logged_success_count": 4
+    },
+    "000022": {
+      "project_id": "000022",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000022",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000022/gen_000022/project_000022_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000022/webvoyager_results/000022",
+      "logged_task_count": 8,
+      "logged_success_count": 6
+    },
+    "000023": {
+      "project_id": "000023",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000023_attempt1/project_000023",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000023_attempt1/project_000023/gen_000023/project_000023_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000023_attempt1/project_000023/webvoyager_results/000023",
+      "logged_task_count": 5,
+      "logged_success_count": 1
+    },
+    "000024": {
+      "project_id": "000024",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000024",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000024/gen_000024/project_000024_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000024/webvoyager_results/000024",
+      "logged_task_count": 5,
+      "logged_success_count": 2
+    },
+    "000025": {
+      "project_id": "000025",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000025_attempt1/project_000025",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000025_attempt1/project_000025/gen_000025/project_000025_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000025_attempt1/project_000025/webvoyager_results/000025",
+      "logged_task_count": 7,
+      "logged_success_count": 7
+    },
+    "000026": {
+      "project_id": "000026",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000026_attempt1/project_000026",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000026_attempt1/project_000026/gen_000026/project_000026_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000026_attempt1/project_000026/webvoyager_results/000026",
+      "logged_task_count": 5,
+      "logged_success_count": 4
+    },
+    "000027": {
+      "project_id": "000027",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000027",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000027/gen_000027/project_000027_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000027/webvoyager_results/000027",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000028": {
+      "project_id": "000028",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000028",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000028/gen_000028/project_000028_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000028/webvoyager_results/000028",
+      "logged_task_count": 6,
+      "logged_success_count": 4
+    },
+    "000029": {
+      "project_id": "000029",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000029_attempt1/project_000029",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000029_attempt1/project_000029/gen_000029/project_000029_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000029_attempt1/project_000029/webvoyager_results/000029",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    },
+    "000030": {
+      "project_id": "000030",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000030_attempt1/project_000030",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000030_attempt1/project_000030/gen_000030/project_000030_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_watchdog_20260513_1242/000030_attempt1/project_000030/webvoyager_results/000030",
+      "logged_task_count": 4,
+      "logged_success_count": 4
+    },
+    "000031": {
+      "project_id": "000031",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000031",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000031/gen_000031/project_000031_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000031/webvoyager_results/000031",
+      "logged_task_count": 7,
+      "logged_success_count": 5
+    },
+    "000032": {
+      "project_id": "000032",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000032",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000032/gen_000032/project_000032_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000032/webvoyager_results/000032",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000033": {
+      "project_id": "000033",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000033",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000033/gen_000033/project_000033_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000033/webvoyager_results/000033",
+      "logged_task_count": 5,
+      "logged_success_count": 5
+    },
+    "000034": {
+      "project_id": "000034",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000034",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000034/gen_000034/project_000034_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000034/webvoyager_results/000034",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000035": {
+      "project_id": "000035",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000035",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000035/gen_000035/project_000035_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000035/webvoyager_results/000035",
+      "logged_task_count": 5,
+      "logged_success_count": 2
+    },
+    "000036": {
+      "project_id": "000036",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000036",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000036/gen_000036/project_000036_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000036/webvoyager_results/000036",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000037": {
+      "project_id": "000037",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000037",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000037/gen_000037/project_000037_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000037/webvoyager_results/000037",
+      "logged_task_count": 8,
+      "logged_success_count": 2
+    },
+    "000038": {
+      "project_id": "000038",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000038",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000038/gen_000038/project_000038_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000038/webvoyager_results/000038",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000039": {
+      "project_id": "000039",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000039",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000039/gen_000039/project_000039_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000039/webvoyager_results/000039",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000040": {
+      "project_id": "000040",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000040",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000040/gen_000040/project_000040_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000040/webvoyager_results/000040",
+      "logged_task_count": 5,
+      "logged_success_count": 3
+    },
+    "000041": {
+      "project_id": "000041",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000041",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000041/gen_000041/project_000041_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000041/webvoyager_results/000041",
+      "logged_task_count": 5,
+      "logged_success_count": 4
+    },
+    "000042": {
+      "project_id": "000042",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000042",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000042/gen_000042/project_000042_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000042/webvoyager_results/000042",
+      "logged_task_count": 8,
+      "logged_success_count": 3
+    },
+    "000043": {
+      "project_id": "000043",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000043",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000043/gen_000043/project_000043_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000043/webvoyager_results/000043",
+      "logged_task_count": 6,
+      "logged_success_count": 4
+    },
+    "000044": {
+      "project_id": "000044",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000044",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000044/gen_000044/project_000044_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000044/webvoyager_results/000044",
+      "logged_task_count": 7,
+      "logged_success_count": 6
+    },
+    "000045": {
+      "project_id": "000045",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000045",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000045/gen_000045/project_000045_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000045/webvoyager_results/000045",
+      "logged_task_count": 8,
+      "logged_success_count": 3
+    },
+    "000046": {
+      "project_id": "000046",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000046",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000046/gen_000046/project_000046_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000046/webvoyager_results/000046",
+      "logged_task_count": 11,
+      "logged_success_count": 6
+    },
+    "000047": {
+      "project_id": "000047",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000047",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000047/gen_000047/project_000047_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000047/webvoyager_results/000047",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    },
+    "000048": {
+      "project_id": "000048",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000048",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000048/gen_000048/project_000048_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000048/webvoyager_results/000048",
+      "logged_task_count": 6,
+      "logged_success_count": 4
+    },
+    "000049": {
+      "project_id": "000049",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000049",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000049/gen_000049/project_000049_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000049/webvoyager_results/000049",
+      "logged_task_count": 4,
+      "logged_success_count": 4
+    },
+    "000050": {
+      "project_id": "000050",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000050",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000050/gen_000050/project_000050_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000050/webvoyager_results/000050",
+      "logged_task_count": 6,
+      "logged_success_count": 2
+    },
+    "000051": {
+      "project_id": "000051",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000051",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000051/gen_000051/project_000051_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000051/webvoyager_results/000051",
+      "logged_task_count": 9,
+      "logged_success_count": 4
+    },
+    "000052": {
+      "project_id": "000052",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000052",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000052/gen_000052/project_000052_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000052/webvoyager_results/000052",
+      "logged_task_count": 6,
+      "logged_success_count": 2
+    },
+    "000053": {
+      "project_id": "000053",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000053",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000053/gen_000053/project_000053_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000053/webvoyager_results/000053",
+      "logged_task_count": 5,
+      "logged_success_count": 4
+    },
+    "000054": {
+      "project_id": "000054",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000054",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000054/gen_000054/project_000054_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000054/webvoyager_results/000054",
+      "logged_task_count": 6,
+      "logged_success_count": 2
+    },
+    "000055": {
+      "project_id": "000055",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000055",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000055/gen_000055/project_000055_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000055/webvoyager_results/000055",
+      "logged_task_count": 7,
+      "logged_success_count": 7
+    },
+    "000056": {
+      "project_id": "000056",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000056",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000056/gen_000056/project_000056_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000056/webvoyager_results/000056",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    },
+    "000057": {
+      "project_id": "000057",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000057",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000057/gen_000057/project_000057_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000057/webvoyager_results/000057",
+      "logged_task_count": 8,
+      "logged_success_count": 3
+    },
+    "000058": {
+      "project_id": "000058",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000058",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000058/gen_000058/project_000058_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000058/webvoyager_results/000058",
+      "logged_task_count": 6,
+      "logged_success_count": 4
+    },
+    "000059": {
+      "project_id": "000059",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000059",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000059/gen_000059/project_000059_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000059/webvoyager_results/000059",
+      "logged_task_count": 5,
+      "logged_success_count": 2
+    },
+    "000060": {
+      "project_id": "000060",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000060",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000060/gen_000060/project_000060_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000060/webvoyager_results/000060",
+      "logged_task_count": 7,
+      "logged_success_count": 5
+    },
+    "000061": {
+      "project_id": "000061",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000061",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000061/gen_000061/project_000061_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000061/webvoyager_results/000061",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000062": {
+      "project_id": "000062",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000062",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000062/gen_000062/project_000062_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000062/webvoyager_results/000062",
+      "logged_task_count": 7,
+      "logged_success_count": 7
+    },
+    "000063": {
+      "project_id": "000063",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000063",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000063/gen_000063/project_000063_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000063/webvoyager_results/000063",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    },
+    "000064": {
+      "project_id": "000064",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000064",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000064/gen_000064/project_000064_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000064/webvoyager_results/000064",
+      "logged_task_count": 7,
+      "logged_success_count": 5
+    },
+    "000065": {
+      "project_id": "000065",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000065",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000065/gen_000065/project_000065_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000065/webvoyager_results/000065",
+      "logged_task_count": 6,
+      "logged_success_count": 1
+    },
+    "000066": {
+      "project_id": "000066",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000066",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000066/gen_000066/project_000066_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000066/webvoyager_results/000066",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000067": {
+      "project_id": "000067",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000067",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000067/gen_000067/project_000067_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000067/webvoyager_results/000067",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000068": {
+      "project_id": "000068",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000068",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000068/gen_000068/project_000068_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000068/webvoyager_results/000068",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000069": {
+      "project_id": "000069",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000069",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000069/gen_000069/project_000069_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000069/webvoyager_results/000069",
+      "logged_task_count": 7,
+      "logged_success_count": 6
+    },
+    "000070": {
+      "project_id": "000070",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000070",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000070/gen_000070/project_000070_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000070/webvoyager_results/000070",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000071": {
+      "project_id": "000071",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000071",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000071/gen_000071/project_000071_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000071/webvoyager_results/000071",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000072": {
+      "project_id": "000072",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000072",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000072/gen_000072/project_000072_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000072/webvoyager_results/000072",
+      "logged_task_count": 7,
+      "logged_success_count": 6
+    },
+    "000073": {
+      "project_id": "000073",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000073",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000073/gen_000073/project_000073_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000073/webvoyager_results/000073",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    },
+    "000074": {
+      "project_id": "000074",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000074",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000074/gen_000074/project_000074_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000074/webvoyager_results/000074",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000075": {
+      "project_id": "000075",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000075",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000075/gen_000075/project_000075_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000075/webvoyager_results/000075",
+      "logged_task_count": 7,
+      "logged_success_count": 5
+    },
+    "000076": {
+      "project_id": "000076",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000076",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000076/gen_000076/project_000076_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000076/webvoyager_results/000076",
+      "logged_task_count": 5,
+      "logged_success_count": 5
+    },
+    "000077": {
+      "project_id": "000077",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000077",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000077/gen_000077/project_000077_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000077/webvoyager_results/000077",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    },
+    "000078": {
+      "project_id": "000078",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000078",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000078/gen_000078/project_000078_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000078/webvoyager_results/000078",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000079": {
+      "project_id": "000079",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000079",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000079/gen_000079/project_000079_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing3_retry3_20260513_2201/project_000079/webvoyager_results/000079",
+      "logged_task_count": 9,
+      "logged_success_count": 6
+    },
+    "000080": {
+      "project_id": "000080",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000080",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000080/gen_000080/project_000080_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000080/webvoyager_results/000080",
+      "logged_task_count": 8,
+      "logged_success_count": 8
+    },
+    "000081": {
+      "project_id": "000081",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000081",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000081/gen_000081/project_000081_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000081/webvoyager_results/000081",
+      "logged_task_count": 6,
+      "logged_success_count": 4
+    },
+    "000082": {
+      "project_id": "000082",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000082",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000082/gen_000082/project_000082_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000082/webvoyager_results/000082",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000083": {
+      "project_id": "000083",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000083",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000083/gen_000083/project_000083_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000083/webvoyager_results/000083",
+      "logged_task_count": 7,
+      "logged_success_count": 3
+    },
+    "000084": {
+      "project_id": "000084",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000084",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000084/gen_000084/project_000084_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000084/webvoyager_results/000084",
+      "logged_task_count": 7,
+      "logged_success_count": 6
+    },
+    "000085": {
+      "project_id": "000085",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000085",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000085/gen_000085/project_000085_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000085/webvoyager_results/000085",
+      "logged_task_count": 7,
+      "logged_success_count": 3
+    },
+    "000086": {
+      "project_id": "000086",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000086",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000086/gen_000086/project_000086_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000086/webvoyager_results/000086",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000087": {
+      "project_id": "000087",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000087",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000087/gen_000087/project_000087_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000087/webvoyager_results/000087",
+      "logged_task_count": 8,
+      "logged_success_count": 7
+    },
+    "000088": {
+      "project_id": "000088",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000088",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000088/gen_000088/project_000088_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000088/webvoyager_results/000088",
+      "logged_task_count": 4,
+      "logged_success_count": 2
+    },
+    "000089": {
+      "project_id": "000089",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000089",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000089/gen_000089/project_000089_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing8_retry2_20260513_2055/project_000089/webvoyager_results/000089",
+      "logged_task_count": 9,
+      "logged_success_count": 7
+    },
+    "000090": {
+      "project_id": "000090",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000090",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000090/gen_000090/project_000090_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000090/webvoyager_results/000090",
+      "logged_task_count": 9,
+      "logged_success_count": 3
+    },
+    "000091": {
+      "project_id": "000091",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000091",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000091/gen_000091/project_000091_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/full101_missing20_retry_20260513_1833/project_000091/webvoyager_results/000091",
+      "logged_task_count": 7,
+      "logged_success_count": 2
+    },
+    "000092": {
+      "project_id": "000092",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000092",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000092/gen_000092/project_000092_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000092/webvoyager_results/000092",
+      "logged_task_count": 6,
+      "logged_success_count": 1
+    },
+    "000093": {
+      "project_id": "000093",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000093",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000093/gen_000093/project_000093_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000093/webvoyager_results/000093",
+      "logged_task_count": 6,
+      "logged_success_count": 5
+    },
+    "000094": {
+      "project_id": "000094",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000094",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000094/gen_000094/project_000094_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000094/webvoyager_results/000094",
+      "logged_task_count": 6,
+      "logged_success_count": 2
+    },
+    "000095": {
+      "project_id": "000095",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000095",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000095/gen_000095/project_000095_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000095/webvoyager_results/000095",
+      "logged_task_count": 6,
+      "logged_success_count": 6
+    },
+    "000096": {
+      "project_id": "000096",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000096",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000096/gen_000096/project_000096_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000096/webvoyager_results/000096",
+      "logged_task_count": 5,
+      "logged_success_count": 1
+    },
+    "000097": {
+      "project_id": "000097",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000097",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000097/gen_000097/project_000097_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000097/webvoyager_results/000097",
+      "logged_task_count": 6,
+      "logged_success_count": 3
+    },
+    "000098": {
+      "project_id": "000098",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000098",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000098/gen_000098/project_000098_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000098/webvoyager_results/000098",
+      "logged_task_count": 5,
+      "logged_success_count": 2
+    },
+    "000099": {
+      "project_id": "000099",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000099",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000099/gen_000099/project_000099_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000099/webvoyager_results/000099",
+      "logged_task_count": 8,
+      "logged_success_count": 1
+    },
+    "000100": {
+      "project_id": "000100",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000100",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000100/gen_000100/project_000100_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000100/webvoyager_results/000100",
+      "logged_task_count": 8,
+      "logged_success_count": 2
+    },
+    "000101": {
+      "project_id": "000101",
+      "project_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000101",
+      "clean_source": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000101/gen_000101/project_000101_LLM",
+      "source_variant": "logged",
+      "logged_results_dir": "batch_runs/official/flash_llm_injection_data/multi_docker_full101_20260513_1242/project_000101/webvoyager_results/000101",
+      "logged_task_count": 7,
+      "logged_success_count": 4
+    }
+  }
+}
